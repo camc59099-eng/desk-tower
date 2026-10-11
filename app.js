@@ -1,10 +1,11 @@
 // Desk HQ UI (pixel Tiny-Tower style). Read-only: polls JSON and draws. No forms, no POSTs, no trading, no sign-ins.
 'use strict';
-const POLL_MS = 4000, TICK_MS = 160, WORLD_H = 264;
+const POLL_MS = 4000, TICK_MS = 160, WORLD_H = 282;
 const Q = new URLSearchParams(location.search);
 let mode = (location.hash.replace('#', '') || 'real');
 let data = null, lastTier = null, preview = +Q.get('preview') || null, skyOverride = Q.get('sky');
 let chatFilter = 'All', lastChatKey = '', worldKey = '', ghostY = null, worldState = null, scale = 3;
+let speechSpots = [], speechI = 0, visitors = null;
 let replayAsof = null, liveDays = [], prevSnap = null, lastRoster = null, sound = false, actx = null, openBot = null;
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch]));
@@ -111,6 +112,7 @@ function render() {
     $('ledgerDiff').textContent = `⚠ Ledger differs by ${money(Math.abs(p.ledger_diff))}: ledger P&L ${money(p.ledger_total, true)} vs Tradovate ${money(p.total, true)}. Showing Tradovate.`
       + (p.starting_balance_mismatch ? ` Start balance in tradovate.json (${money(p.starting_balance_file)}) ≠ my-rules.md.` : '');
   }
+  syncBadge(d); marketWidget(d);
   $('updated').textContent = (d.demo ? 'DEMO data built ' : 'Real data updated ') + fmtTime(d.generated_at) + (d.asof ? ` · REPLAY as of ${fmtDay(d.asof)}` : '');
   $('limitBanner').hidden = !p.daily_limit_hit;
   $('limitBanner').textContent = `DAILY LIMIT HIT: today's paper loss reached ${money(p.daily_limit_usd)} (2%). Per my-rules.md no more cards until tomorrow.`;
@@ -139,12 +141,12 @@ function render() {
 function world(d, lvl) {
   const sky = $('sky'); scale = sky.clientWidth >= 600 ? 3 : 2;
   const ap = d.autopilot || {};
-  const key = [lvl, sky.clientWidth, scale, mode, d.asof, [...worldState.hire].join(), JSON.stringify(ap), d.bots.map(b => b.mood + b.status + b.version).join()].join('|');
+  const key = [lvl, sky.clientWidth, scale, mode, d.asof, [...worldState.hire].join(), JSON.stringify(ap), d.bots.map(b => b.mood + b.status + b.version + b.face + b.last_text).join(), JSON.stringify(d.leaderboard), JSON.stringify(d.closed_trades.map(t => t.lead_id + t.pnl)), d.open_trades.length].join('|');
   if (key === worldKey) return; worldKey = key;
   const lay = PX.init($('world'), lvl, scale, {H: WORLD_H});
   ghostY = PX.frame(worldState);
   const S = scale, FH = PX.FH, byName = Object.fromEntries(d.bots.map(b => [b.name, b]));
-  let h = '';
+  let h = ''; speechSpots = [];
   lay.floors.forEach(fl => {
     const top = (fl.y + 1) * S, height = (FH - 2) * S;
     const left = lay.compact ? (lay.rx + lay.rw - 47) * S : lay.labelX * S, width = lay.compact ? 46 * S : lay.LW * S;
@@ -154,6 +156,7 @@ function world(d, lvl) {
       h += `<div class="tag${cmp} ${warn ? 'warn' : ''}" data-bot="${esc(fl.bot)}" title="Click for ${esc(fl.bot)}'s floor details" style="--c:${PX.COL[fl.bot]};left:${left}px;top:${top}px;width:${width}px;height:${height}px">
         <b>${esc(fl.bot.toUpperCase())}${v}${warn ? ' · FOR HIRE?' : ''}</b><span>${esc(fl.room.name)} · ${esc(b.role)}</span><em>${esc(b.status)}</em></div>`;
       h += `<div class="hot" data-bot="${esc(fl.bot)}" style="left:${lay.rx * S}px;top:${top}px;width:${(lay.compact ? lay.rw - 48 : lay.rw) * S}px;height:${height}px"></div>`;
+      if (b.last_text) speechSpots.push({bot: fl.bot, text: b.last_text, left: (lay.rx + 50) * S, top: (fl.y - 1) * S});
       if (warn) h += `<div class="forhire" style="left:${(lay.rx + 68) * S}px;top:${(fl.y + 3) * S}px">FOR HIRE?</div>`;
     } else if (fl.key === 'lobby') {
       const st = (ap.state || 'NOT SET'), stc = st === 'ON' ? 'on' : st === 'PAUSED' ? 'paused' : 'off';
@@ -161,7 +164,13 @@ function world(d, lvl) {
       h += `<div class="apboard${cmp}" title="${esc(ap.source || '')}${ap.raw ? ' · ' + esc(ap.raw) : ''}" style="left:${(lay.rx + (lay.compact ? 30 : 38)) * S}px;top:${(fl.y + 2) * S}px;width:${(lay.rw - (lay.compact ? 52 : 76)) * S}px;height:${(FH - 5) * S}px">
         <div><b class="${stc}">AUTOPILOT ${esc(st)}</b><span title="autopilot trades today">${ap.used_today ?? 0}/${ap.max_today ?? 5}</span></div>
         <div class="lossbar" title="Today's loss vs the 2% daily limit"><i style="width:${Math.round(lp / 10) * 10}%"></i></div><small>2% LOSS LIMIT: ${lp}% USED</small></div>`;
+      h += `<div id="visitors" class="visitors${cmp}" title="${PUBLIC ? 'Page-load count from a no-account, no-cookie public counter (abacus.jasoncameron.dev). No individual tracking.' : 'The visitor counter only runs on the public GitHub Pages copy.'}" style="left:${(lay.rx + 1) * S}px;top:${(fl.y + 1) * S}px;width:${(lay.compact ? 28 : 36) * S}px">${visitorText()}</div>`;
       if (!lay.compact) h += `<div class="tag amen" style="--c:#c8d0f0;left:${left}px;top:${top}px;width:${width}px;height:${height}px"><b>LOBBY</b><span>Ground floor · lift to every floor</span><em>Autopilot board is display-only</em></div>`;
+    } else if (fl.key === 'leader') {
+      const lb = d.leaderboard || [];
+      h += `<div class="lboard${cmp}" title="Ranked by net paper P&L of closed trades on leads each bot worked on" style="left:${(lay.rx + 4) * S}px;top:${(fl.y + 2) * S}px;width:${(lay.rw - 8) * S}px;height:${(FH - 6) * S}px">${lb.map((r, i) =>
+        `<span style="--c:${PX.COL[r.name]}"><i>${i + 1}</i><b>${esc(r.name.toUpperCase())}</b><em class="${cls(r.net)}">${r.trades ? money(r.net, true) : '–'}</em></span>`).join('')}</div>`;
+      if (!lay.compact) h += `<div class="tag amen" style="--c:#ffd23f;left:${left}px;top:${top}px;width:${width}px;height:${height}px"><b>LEADERBOARD</b><span>Net P&amp;L of leads worked</span><em>${lb.some(r => r.trades) ? 'Closed paper trades only' : 'No closed trades yet'}</em></div>`;
     } else if (!lay.compact) {
       const t = d.tiers.find(t => t.level === fl.room.unlock);
       h += `<div class="tag amen" style="--c:#c8d0f0;left:${left}px;top:${top}px;width:${width}px;height:${height}px"><b>${esc(fl.room.name)}</b><span>Unlocked at ${esc(t ? t.label : '')}</span><em>Bitizens relaxing</em></div>`;
@@ -170,7 +179,8 @@ function world(d, lvl) {
   if (lvl >= 2) h += `<div class="bill ${lvl >= 5 ? 'neon' : ''}" style="left:${(lay.x0 + 35) * S}px;top:${(lay.roofY - 29) * S}px;width:${64 * S}px;height:${11 * S}px">${lvl >= 5 ? 'CHEN TOWER' : "CAM'S DESK"}${d.demo ? ' ·DEMO' : ''}</div>`;
   if (ghostY != null) { const nt = d.tiers.find(t => t.level === lvl + 1);
     h += `<div class="ghost" style="left:${lay.x0 * S}px;top:${ghostY * S}px;width:${PX.TW * S}px;height:${FH * S}px">NEXT: ${esc(nt.unlocks.split(' + ')[0].toUpperCase())} AT ${esc(nt.label.split(' ')[0])}</div>`; }
-  h += `<div class="bubble" id="bubble"></div>`;
+  h += timeline(d, lay, S);
+  h += `<div class="bubble" id="bubble"></div><div class="speech" id="speech" hidden></div><div class="tltip" id="tltip" hidden></div>`;
   $('overlay').innerHTML = h;
   $('sky').style.height = WORLD_H * S + 'px';
   $('overlay').querySelectorAll('[data-bot]').forEach(el => {
@@ -180,9 +190,93 @@ function world(d, lvl) {
       bub.style.left = Math.max(4, parseInt(el.style.left) - 260) + 'px'; bub.style.top = Math.max(4, parseInt(el.style.top) - 20) + 'px'; bub.classList.add('on'); };
     el.onmouseleave = () => $('bubble').classList.remove('on');
   });
+  $('overlay').querySelectorAll('[data-tl]').forEach(el => el.onclick = e => { e.stopPropagation(); const t = tlTrades[+el.dataset.tl], tip = $('tltip');
+    if (!tip.hidden && tip.dataset.i === el.dataset.tl) { tip.hidden = true; return; }
+    tip.dataset.i = el.dataset.tl;
+    tip.innerHTML = `<b>#${esc(t.lead_id)} ${esc(t.ticker)}</b> ${esc(t.side || '')}<br>${esc(t.date)} · ${t.pnl == null ? 'OPEN' : `<span class="${cls(t.pnl)}">${money(t.pnl, true)}</span>`}<br>entry ${t.entry ?? '–'} · stop ${t.stop ?? '–'} · tgt ${t.target ?? '–'}${t.note ? `<br><i>${esc(String(t.note).slice(0, 80))}</i>` : ''}`;
+    const x = parseInt(el.style.left); tip.style.left = Math.max(4, Math.min($('sky').clientWidth - 214, x - 100)) + 'px'; tip.style.bottom = (parseInt(el.dataset.b) + 18) + 'px'; tip.hidden = false; });
+  speechI = speechI % Math.max(1, speechSpots.length); speak();
+}
+
+// ---------------- trade timeline along the street
+let tlTrades = [];
+function timeline(d, lay, S) {
+  tlTrades = [...d.closed_trades, ...d.open_trades.map(t => ({...t, pnl: null}))].sort((a, b) => String(a.date).localeCompare(String(b.date))).slice(-40);
+  const top = (lay.groundY + 2) * S, h = 4 * S, b = (WORLD_H - lay.groundY - 2) * S - h, x0 = 64, x1 = Math.max(x0 + 40, $('sky').clientWidth - 14);
+  let out = `<div class="tlbar" style="top:${top}px;height:${h}px"><span>TRADES</span>${tlTrades.length ? '' : '<em>NO PAPER TRADES YET</em>'}</div>`;
+  tlTrades.forEach((t, i) => { const x = tlTrades.length === 1 ? x0 : Math.round(x0 + i * (x1 - x0) / (tlTrades.length - 1)), k = t.pnl == null ? 'open' : t.pnl > 0 ? 'win' : t.pnl < 0 ? 'loss' : 'flat';
+    out += `<button class="tlm ${k}" data-tl="${i}" data-b="${b}" title="#${esc(t.lead_id)} ${esc(t.ticker)} · ${t.pnl == null ? 'open' : money(t.pnl, true)}" style="left:${x - 5}px;top:${top + (h - 10) / 2}px" aria-label="Trade ${esc(t.lead_id)}"></button>`; });
+  return out;
+}
+document.addEventListener('click', () => { const t = $('tltip'); if (t) t.hidden = true; });
+
+// ---------------- rotating speech bubbles (latest message per bot)
+function speak() {
+  const el = $('speech'); if (!el) return;
+  if (!speechSpots.length || $('modal').hidden === false) { el.hidden = true; return; }
+  const sp = speechSpots[speechI % speechSpots.length]; speechI++;
+  const txt = sp.text.replace(/\s+/g, ' ').trim(), short = txt.length > 54 ? txt.slice(0, 52).trimEnd() + '…' : txt;
+  el.style.setProperty('--c', PX.COL[sp.bot]); el.innerHTML = `<b>${esc(sp.bot.toUpperCase())}:</b> ${esc(short)}`;
+  el.style.left = sp.left + 'px'; el.style.top = sp.top + 'px'; el.hidden = false;
+}
+setInterval(speak, 3500);
+
+// ---------------- visitors counter (public GitHub Pages copy only; no cookies, no accounts, no per-person tracking)
+const PUBLIC = STATIC && /\.github\.io$/.test(location.hostname);
+const COUNTER = 'https://abacus.jasoncameron.dev/%s/camc59099-desk-tower/visits';
+function visitorText() { return PUBLIC ? `VISITORS<br><b>${visitors == null ? '…' : Number(visitors).toLocaleString('en-US')}</b>` : 'VISITORS<br><small>PUBLIC PAGE ONLY</small>'; }
+async function countVisit() {
+  if (!PUBLIC) return;
+  let op = 'get'; try { if (!sessionStorage.getItem('hq_counted')) { op = 'hit'; sessionStorage.setItem('hq_counted', '1'); } } catch (e) { op = 'get'; }
+  try { const r = await fetch(COUNTER.replace('%s', op), {credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store'});
+    const j = await r.json(); visitors = typeof j.value === 'number' && j.value >= 0 ? j.value : null; }
+  catch (e) { visitors = null; }
+  const el = $('visitors'); if (el) el.innerHTML = visitors == null ? 'VISITORS<br><small>COUNTER OFFLINE</small>' : visitorText();
+}
+countVisit();
+
+// ---------------- live sync badge
+function nyOpen() { const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', {timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit', hour12: false})
+  .formatToParts(new Date()).map(x => [x.type, x.value])); const h = (+p.hour % 24) + (+p.minute) / 60; return !['Sat', 'Sun'].includes(p.weekday) && h >= 9.5 && h < 16; }
+function ago(ms) { const m = Math.max(0, Math.round(ms / 6e4)); return m < 60 ? m + 'M' : m < 2880 ? Math.round(m / 60) + 'H' : Math.round(m / 1440) + 'D'; }
+function syncBadge(d) {
+  const el = $('syncBadge'), p = d.pnl, sy = d.sync;
+  if (d.demo || d.asof) { el.hidden = true; return; }
+  el.hidden = false; let c = 'off', t, tip;
+  if (sy && sy.ok === false) { c = 'bad'; t = 'SYNC FAILED' + (sy.at ? ' · ' + fmtTime(sy.at).toUpperCase() : ''); tip = sy.message || 'data/sync_status.json says the last sync failed'; }
+  else if (p.source === 'tradovate') { const age = Date.now() - Date.parse(p.as_of), open = nyOpen();
+    c = isNaN(age) ? 'warn' : open && age > 45 * 6e4 ? 'warn' : 'ok';
+    t = `SYNC ${isNaN(age) ? '?' : ago(age) + ' AGO'}${c === 'warn' ? ' · STALE' : ''}`;
+    tip = `tradovate.json as_of ${p.as_of}. Amber when older than 45 min during US market hours (9:30-16:00 ET weekdays).${sy && sy.ok ? ' Last sync OK ' + fmtTime(sy.at) + '.' : ''}`; }
+  else { t = 'NO BROKER SYNC · LEDGER ONLY'; tip = 'No data/tradovate.json, so P&L comes from paper-ledger.csv.'; }
+  el.className = 'sync ' + c; el.textContent = t; el.title = tip;
+}
+
+// ---------------- market weather (Nasdaq-100 daily move, fetched by build_data.py)
+function marketWidget(d) {
+  const m = d.market, el = $('weather');
+  if (!m || d.asof) { el.hidden = true; return; }
+  el.hidden = false;
+  if (!m.ok) { el.innerHTML = `<canvas class="px" id="wxIcon"></canvas><div><b>NDX WEATHER</b><span>${esc(m.message || 'Market data unavailable')}</span></div>`; wxIcon('unknown'); el.title = m.source || ''; return; }
+  const c = m.change_pct, kind = c >= 0.5 ? 'sun' : c >= 0 ? 'part' : c > -0.5 ? 'cloud' : c > -1.5 ? 'rain' : 'storm';
+  const mt = new Date(m.market_time), when = isNaN(mt) ? '' : mt.toLocaleString('en-US', {timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit'}) + ' ET';
+  el.innerHTML = `<canvas class="px" id="wxIcon"></canvas><div><b>NDX <span class="${cls(c)}">${c > 0 ? '+' : ''}${c.toFixed(2)}%</span></b><span>as of ${esc(when)}${m.stale_fetch ? ' · refresh failed' : ''}</span><span>Yahoo Finance · fetched ${esc(fmtTime(m.fetched_at))}</span></div>`;
+  el.title = `Nasdaq-100 ${m.last} vs prev close ${m.prev_close}. Source: ${m.source}. Fetched by build_data.py, cached 15 min.`;
+  wxIcon(kind);
+}
+function wxIcon(kind) {
+  const c = $('wxIcon'); c.width = 16; c.height = 12; const x = c.getContext('2d'), R = (a, b, w, h, col) => { x.fillStyle = col; x.fillRect(a, b, w, h); };
+  const sun = (ox, oy) => { R(ox + 1, oy, 4, 6, '#ffe066'); R(ox, oy + 1, 6, 4, '#ffe066'); R(ox + 2, oy + 1, 1, 1, '#fff6bf'); };
+  const cloud = (ox, oy, col) => { R(ox + 2, oy, 5, 2, col); R(ox, oy + 2, 11, 3, col); R(ox + 7, oy + 1, 3, 1, col); };
+  if (kind === 'sun') { sun(5, 3); R(8, 0, 1, 2, '#ffe066'); R(8, 10, 1, 2, '#ffe066'); R(2, 6, 2, 1, '#ffe066'); R(13, 6, 2, 1, '#ffe066'); }
+  else if (kind === 'part') { sun(8, 1); cloud(1, 5, '#f4f6ff'); }
+  else if (kind === 'cloud') cloud(2, 3, '#c3c9dc');
+  else if (kind === 'rain') { cloud(2, 1, '#8a93ad'); [3, 7, 11].forEach(i => R(i, 8, 1, 2, '#5ab0ff')); }
+  else if (kind === 'storm') { cloud(2, 1, '#5d6580'); R(7, 6, 2, 2, '#ffd23f'); R(6, 8, 2, 2, '#ffd23f'); R(5, 10, 2, 1, '#ffd23f'); R(3, 7, 1, 2, '#5ab0ff'); R(12, 7, 1, 2, '#5ab0ff'); }
+  else { cloud(2, 3, '#555c74'); R(7, 4, 2, 1, '#fff'); }
 }
 setInterval(() => { if (worldState && worldKey) PX.frame(worldState); }, TICK_MS);
-setInterval(() => { if (data) { const mp = marketPhase(); $('hud').textContent = mp.label; if (worldState) worldState.phase = mp.phase; } }, 30000);
+setInterval(() => { if (data) { const mp = marketPhase(); $('hud').textContent = mp.label; if (worldState) worldState.phase = mp.phase; syncBadge(data); } }, 30000);
 
 // ---------------- history replay
 function replayUI(d) {

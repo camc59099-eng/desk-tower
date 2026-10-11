@@ -12,6 +12,7 @@ const PX = (() => {
     Skeptic: {name: 'RISK VAULT', wall: '#8b93a6', wall2: '#7c8497'},
     Chief: {name: 'PENTHOUSE OFFICE', wall: '#f3d58a', wall2: '#e8c46c'},
     lobby: {name: 'LOBBY', wall: '#e9dcc4', wall2: '#ddcfb4'},
+    leader: {name: 'LEADERBOARD', wall: '#232a50', wall2: '#1d2340'},
     cafe: {name: 'CAFE', wall: '#c98b5a', wall2: '#bb7d4d', unlock: 2},
     gym: {name: 'GYM', wall: '#5fc7b8', wall2: '#50b8a9', unlock: 3},
     arcade: {name: 'ARCADE', wall: '#3b2a63', wall2: '#33245a', unlock: 4},
@@ -38,7 +39,7 @@ const PX = (() => {
   const R = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(x | 0, y | 0, w | 0, h | 0); };
 
   function layout(level, W_, H_) {
-    const floors = [{type: 'lobby', key: 'lobby'}];
+    const floors = [{type: 'lobby', key: 'lobby'}, {type: 'leader', key: 'leader'}];
     ['cafe', 'gym', 'arcade', 'trophy'].forEach(k => { if (level >= ROOM[k].unlock) floors.push({type: 'amenity', key: k}); });
     BOT_ORDER.forEach(b => floors.push({type: 'bot', key: b, bot: b}));
     const groundY = H_ - GROUND;
@@ -58,7 +59,7 @@ const PX = (() => {
     const r = rng(7 + level);
     walkers = [];
     lay.floors.forEach(fl => {
-      const n = fl.type === 'lobby' ? 3 : fl.type === 'amenity' ? 2 : 1;
+      const n = fl.type === 'lobby' ? 3 : fl.type === 'amenity' ? 2 : fl.type === 'leader' ? 0 : 1;
       for (let j = 0; j < n; j++) {
         const pal = PALS[Math.floor(r() * PALS.length)];
         walkers.push({fl: fl.i, x: lay.rx + 6 + Math.floor(r() * (lay.rw - 16)), dir: r() < .5 ? -1 : 1,
@@ -71,10 +72,13 @@ const PX = (() => {
 
   // ---------------- sprites
   function sprite(rows, x, y, map) { rows.forEach((row, j) => { for (let i = 0; i < row.length; i++) { const c = map[row[i]]; if (c) R(x + i, y + j, 1, 1, c); } }); }
-  function drawBot(name, x, y, mood, fr) {
+  function drawBot(name, x, y, mood, fr, face) {
     const h = HAT[name], c = COL[name];
-    const map = {k: '#1a1020', s: h.skin, h: h.hair, c, p: '#2d2f4a', w: '#fff'};
+    const map = {k: '#1a1020', s: h.skin, h: h.hair, c, p: '#2d2f4a', w: '#fff', r: '#ff8fa3'};
     let rows = BODY.slice();
+    if (face === 'happy') { rows[4] = 'srsssrs'; rows[5] = '.skkks.'; }
+    else if (face === 'stressed') { rows[5] = '.ksksk.'; }
+    else if (face === 'neutral') { rows[5] = '.sskss.'; }
     if (mood === 'idle' && fr % 8 < 4) rows[3] = 'sssssss';
     if (mood === 'busy') rows[7] = fr % 2 ? 'scccccs' : 'cscccsc';
     if (mood === 'walk') rows[9] = fr % 2 ? '.p...p.' : '..p.p..';
@@ -89,6 +93,7 @@ const PX = (() => {
     if (h.brim) R(x + 5, by + 1, 3, 1, '#1f4fa0');
     (h.extra || []).forEach(([ex, ey, col]) => R(x + ex, by + ey, 1, 1, col));
     if (mood === 'idle') { const zy = by - 3 - (fr % 6 > 2 ? 2 : 0); R(x + 8, zy, 3, 1, '#fff'); R(x + 9, zy + 1, 1, 1, '#fff'); R(x + 8, zy + 2, 3, 1, '#fff'); }
+    if (face === 'stressed' && fr % 4 < 2) R(x + 7, by + 2, 1, 2, '#7fd3ff');
     if (mood === 'warning') { R(x + 7, by + 1, 1, 2, '#7fd3ff'); if (fr % 2) { R(x + 3, by - 6, 1, 3, '#ff3b3b'); R(x + 3, by - 2, 1, 1, '#ff3b3b'); } }
   }
   function drawWalker(w, x, y, fr) {
@@ -158,6 +163,11 @@ const PX = (() => {
       if (lay.level >= 3) { R(x + 30, s - 1, w - 52, 1, '#c0392b'); plant(x + 4, s); }
       if (lay.level >= 5) { const cx = x + Math.floor(w / 2); R(cx - 1, y + 1, 2, 2, '#ffd23f'); R(cx - 4, y + 3, 8, 1, '#ffd23f'); R(cx - 4, y + 4, 1, 1, '#fff6a0'); R(cx + 3, y + 4, 1, 1, '#fff6a0'); }
     },
+    leader(x, y, w, s) {
+      R(x + 3, y + 1, w - 6, h0(y, s) - 1, '#0a0d1e'); R(x + 3, y + 1, w - 6, 1, '#ffd23f'); R(x + 3, s - 2, w - 6, 1, '#ffd23f');
+      for (let i = 0; i < w - 6; i += 4) if ((i + f) % 8 < 4) R(x + 3 + i, y + 1, 2, 1, '#fff6a0');
+      R(x + 1, s - 6, 2, 6, '#555'); R(x + w - 3, s - 6, 2, 6, '#555');
+    },
     cafe(x, y, w, s) {
       R(x + 4, s - 7, 26, 7, '#6b3e26'); R(x + 4, s - 8, 26, 1, '#a0673d'); R(x + 8, s - 13, 6, 5, '#555'); R(x + 9, s - 12, 4, 2, '#e74c3c');
       if (f % 4 < 2) R(x + 10, s - 15, 1, 2, '#eee'); else R(x + 11, s - 16, 1, 2, '#eee');
@@ -217,6 +227,7 @@ const PX = (() => {
       plant(x + 108, s); R(x + 40, s - 9, 3, 2, '#ffd23f'); R(x + 41, s - 7, 1, 2, '#c99a00');
     },
   };
+  function h0(y, s) { return s - y - 1; }
   function plant(x, s) { R(x, s - 4, 5, 4, '#a0522d'); R(x + 1, s - 8, 3, 4, '#2e8b57'); R(x, s - 10, 2, 3, '#3fae4a'); R(x + 3, s - 10, 2, 3, '#3fae4a'); }
 
   function drawFloor(fl, d) {
@@ -231,10 +242,10 @@ const PX = (() => {
         desk(x + 48, s - 5, '#8b5a2b', '#24304a');
         const t = cer.t;
         if (t < 26) drawBot(fl.bot, Math.max(x + 1, x + 52 - t * 2), s - 10, 'ghost', f);
-        else if (t >= 32) { const nx = Math.min(x + 52, x + 1 + (t - 32) * 2); drawBot(fl.bot, nx, s - 10, nx >= x + 52 ? 'busy' : 'walk', f);
+        else if (t >= 32) { const nx = Math.min(x + 52, x + 1 + (t - 32) * 2); drawBot(fl.bot, nx, s - 10, nx >= x + 52 ? 'busy' : 'walk', f, 'happy');
           if (f % 2) { R(nx - 2, s - 13, 1, 1, '#fff6a0'); R(nx + 8, s - 6, 1, 1, '#fff6a0'); } else { R(nx + 9, s - 12, 1, 1, '#ffd23f'); R(nx - 2, s - 5, 1, 1, '#ffd23f'); } }
       } else {
-        drawBot(fl.bot, x + 52, s - 12, mood, f + fl.i);
+        drawBot(fl.bot, x + 52, s - 12, mood, f + fl.i, b.face);
         desk(x + 48, s - 5, fl.bot === 'Chief' ? '#6b2f1a' : '#8b5a2b', mood === 'busy' ? (f % 2 ? '#4cff8f' : '#2bbf6a') : '#24304a');
       }
     }
