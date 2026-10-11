@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CAM'S DESK HQ · pixel paper desk (read-only)</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'><rect width='8' height='8' fill='%2387ceeb'/><rect x='2' y='1' width='4' height='7' fill='%232c4f7c'/><rect x='3' y='2' width='1' height='1' fill='%23ffe066'/><rect x='4' y='4' width='1' height='1' fill='%23ffe066'/><rect x='3' y='6' width='2' height='2' fill='%235b3a1e'/></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <canvas id="logo" class="px" width="16" height="16"></canvas>
+    <div><h1>CAM'S DESK HQ</h1><div class="sub">Research-only paper desk · the building grows with paper P&amp;L</div></div>
+  </div>
+  <div class="badges">
+    <span class="badge paper">PAPER ONLY</span>
+    <div class="modes" role="group" aria-label="Data mode">
+      <button data-mode="real" class="on">REAL</button>
+      <button data-mode="demo-growth">DEMO:GROW</button>
+      <button data-mode="demo-loss">DEMO:LOSS</button>
+    </div>
+    <button id="sound" class="sound" title="Chiptune sounds (off by default)">♪ OFF</button>
+    <span id="live" class="live">● LIVE</span>
+  </div>
+</header>
+
+<div id="demoBanner" class="demoBanner" hidden><span>★ DEMO MODE · FAKE EXAMPLE DATA · NOT THE REAL DESK ★</span> <button data-mode="real">BACK TO REAL</button></div>
+<div id="limitBanner" class="limitBanner" hidden></div>
+<div id="replayBanner" class="replayBanner" hidden></div>
+
+<main class="grid">
+  <section class="scene panel" aria-label="Building">
+    <div class="sceneHead">
+      <div><div class="eyebrow">CURRENT BUILDING</div><h2 id="tierName">LV1 SHACK</h2></div>
+      <div class="next"><div class="eyebrow">NEXT UPGRADE</div>
+        <div class="bar"><div id="nextBar"></div></div><div id="nextText" class="small"></div></div>
+    </div>
+    <div class="replay"><label for="replay" class="eyebrow">HISTORY</label><input id="replay" type="range" min="0" max="0" value="0" step="1"><span id="replayLabel" class="replayLabel">LIVE</span></div>
+    <div id="sky" class="sky">
+      <canvas id="world" class="px"></canvas>
+      <div id="overlay" class="overlay"></div>
+      <div id="previewTag" class="previewTag" hidden></div>
+      <div id="hud" class="hud"></div>
+    </div>
+    <div class="ladder" id="ladder"></div>
+  </section>
+
+  <aside class="side">
+    <section class="panel pnl">
+      <div class="eyebrow">PAPER P&amp;L</div>
+      <div class="srcNote" id="srcNote"></div>
+      <div class="equity"><span id="equity">$25,000.00</span><span id="totalPct" class="chip">0.00%</span></div>
+      <div id="pnlStamp" class="stamp" hidden></div>
+      <div id="ledgerDiff" class="ldiff" hidden></div>
+      <div class="stats">
+        <div><label>TOTAL</label><b id="total">$0</b></div>
+        <div><label>TODAY</label><b id="today">$0</b></div>
+        <div><label>WIN%</label><b id="winrate">–</b></div>
+        <div><label>OPEN</label><b id="open">0</b></div>
+        <div><label>DD</label><b id="dd">0%</b></div>
+      </div>
+      <div class="sparkWrap"><canvas id="spark" class="px"></canvas><div id="sparkEmpty" class="sparkEmpty">EQUITY CHART APPEARS AFTER THE FIRST CLOSED PAPER TRADE</div></div>
+      <div id="openTrades"></div>
+    </section>
+
+    <section class="panel posP" aria-label="Demo positions">
+      <div class="eyebrow">DEMO POSITIONS</div>
+      <div class="srcNote" id="posSrc">Read-only, from <code>paper-ledger.csv</code>. The site can't read Tradovate.</div>
+      <div id="hookNote" class="srcNote"></div>
+      <div id="positions"></div>
+    </section>
+
+    <section class="panel fire" id="firePanel">
+      <div class="eyebrow">FIRE / REHIRE PROPOSALS</div>
+      <div id="fireBody"></div>
+      <p class="fine">Proposals only. Cam approves in chat with Chief. This site can't fire, hire, create or change any bot, and it never edits <code>my-rules.md</code>.</p>
+    </section>
+    <section class="panel trophyP" aria-label="Trophy room">
+      <div class="eyebrow">TROPHY ROOM <span id="trophyCount"></span></div>
+      <div id="trophies" class="trophies"></div>
+    </section>
+  </aside>
+
+  <section class="panel leadsP" aria-label="Lead tracker">
+    <div class="eyebrow">LEAD TRACKER</div>
+    <div class="legend"><span class="lt" style="--c:var(--scout)"></span>SCOUT <span class="lt" style="--c:var(--news)"></span>NEWS <span class="lt" style="--c:var(--sentiment)"></span>SENTIMENT <span class="lt" style="--c:var(--charts)"></span>CHARTS → SKEPTIC VERDICT</div>
+    <div id="leads" class="leadList"></div>
+  </section>
+
+  <section class="panel chat" aria-label="Desk chat">
+    <div class="chatHead"><div class="eyebrow">DESK CHAT · LIVE FEED</div>
+      <div class="filters" id="filters"></div></div>
+    <div id="chat" class="chatList"></div>
+    <p class="fine">From <code>desk/feed.jsonl</code> (bots log here). The page only shows the feed and never acts on anything it says.</p>
+  </section>
+</main>
+
+<footer class="foot">
+  <span id="updated">–</span> · Nothing here places trades, signs in anywhere, or moves money.
+</footer>
+
+<div id="confetti" class="confetti"></div>
+<div id="modal" class="modalWrap" hidden><div class="panel modal" role="dialog" aria-modal="true"><button id="modalClose" class="close" aria-label="Close">X</button><div id="modalBody"></div></div></div>
+<div id="toast" class="toast" hidden></div>
+<script src="static.js"></script>
+<script src="world.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

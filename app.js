@@ -1,0 +1,368 @@
+// Desk HQ UI (pixel Tiny-Tower style). Read-only: polls JSON and draws. No forms, no POSTs, no trading, no sign-ins.
+'use strict';
+const POLL_MS = 4000, TICK_MS = 160, WORLD_H = 264;
+const Q = new URLSearchParams(location.search);
+let mode = (location.hash.replace('#', '') || 'real');
+let data = null, lastTier = null, preview = +Q.get('preview') || null, skyOverride = Q.get('sky');
+let chatFilter = 'All', lastChatKey = '', worldKey = '', ghostY = null, worldState = null, scale = 3;
+let replayAsof = null, liveDays = [], prevSnap = null, lastRoster = null, sound = false, actx = null, openBot = null;
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch]));
+const money = (v, sign = false) => v == null ? '–' : (sign && v > 0 ? '+' : v < 0 ? '−' : '') + '$' + Math.abs(v).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+const cls = v => v > 0 ? 'pos' : v < 0 ? 'neg' : '';
+const fmtTime = ts => { if (!ts) return ''; const d = new Date(ts); if (isNaN(d)) return esc(ts);
+  return d.toLocaleString('en-AU', {timeZone: 'Australia/Sydney', weekday: 'short', hour: 'numeric', minute: '2-digit'}) + ' Syd'; };
+const fmtDay = ds => { const d = new Date(ds + 'T12:00:00'); return isNaN(d) ? ds : d.toLocaleDateString('en-AU', {weekday: 'short', day: 'numeric', month: 'short'}); };
+const avatarURL = {}; function avatar(name) { if (!avatarURL[name]) { const c = document.createElement('canvas'); PX.avatar(c, name); avatarURL[name] = c.toDataURL(); } return avatarURL[name]; }
+
+// ---------------- data
+const STATIC = !!window.HQ_STATIC; // static export (GitHub Pages): replay days are pre-built files
+function src() { const f = mode === 'demo-growth' ? 'demo_growth.json' : mode === 'demo-loss' ? 'demo_loss.json' : 'data.json';
+  if (STATIC && replayAsof) return `history/${mode}/${replayAsof}.json?t=${Date.now()}`;
+  return f + '?t=' + Date.now() + (replayAsof ? '&asof=' + replayAsof : ''); }
+async function poll() {
+  const want = mode + '|' + replayAsof;
+  try {
+    const r = await fetch(src(), {cache: 'no-store'});
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    if (want !== mode + '|' + replayAsof) return; // stale response after a mode/replay switch
+    if ((mode === 'real') === !!d.demo) throw new Error('mode mismatch'); // never mix demo and real
+    if (d.pnl && d.pnl.as_of) { const t = Date.parse(d.pnl.as_of); d.pnl.stale = isNaN(t) || Date.now() - t > 864e5; } // age checked in the browser
+    data = d; if (!d.asof) liveDays = d.days || liveDays;
+    events(d); render(); $('live').className = 'live'; $('live').textContent = replayAsof ? '● REPLAY' : mode === 'real' ? '● LIVE' : '● DEMO';
+  } catch (e) { $('live').className = 'live stale'; $('live').textContent = '● OFFLINE'; $('live').title = e.message; }
+}
+function setMode(m) {
+  if (mode !== m) preview = null; mode = m; location.hash = m === 'real' ? '' : m; lastTier = null; lastChatKey = ''; worldKey = '';
+  replayAsof = null; prevSnap = null; lastRoster = null; liveDays = [];
+  document.querySelectorAll('.modes button').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
+  $('demoBanner').hidden = m === 'real'; data = null; $('chat').innerHTML = ''; closeModal(); poll();
+}
+document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
+
+// ---------------- events: trades closing, rehires, new leads/orders, level ups
+function events(d) {
+  const snap = {closed: new Set(d.closed_trades.map(t => t.lead_id + '|' + t.date + '|' + t.pnl)), rows: d.open_trades.length + d.pnl.closed,
+    chat: new Set(d.chat.map(m => m.ts + m.bot + m.text)), tier: d.tier.level};
+  if (prevSnap) {
+    const fresh = d.closed_trades.filter(t => !prevSnap.closed.has(t.lead_id + '|' + t.date + '|' + t.pnl));
+    const wins = fresh.filter(t => t.pnl > 0), losses = fresh.filter(t => t.pnl < 0);
+    if (wins.length) { PX.coinShower(Math.min(60, 14 * wins.length)); toast(`+${money(wins.reduce((a, t) => a + t.pnl, 0))} · COIN SHOWER!`); sfx('coin'); }
+    if (losses.length) { PX.slump([...new Set(losses.flatMap(t => t.workers || []))], 60); toast(`${money(losses.reduce((a, t) => a + t.pnl, 0))} · the desk slumps`); sfx('sad'); }
+    const newMsgs = d.chat.filter(m => !prevSnap.chat.has(m.ts + m.bot + m.text));
+    if (newMsgs.some(m => m.kind === 'lead')) sfx('lead');
+    if (newMsgs.some(m => m.kind === 'order') || snap.rows > prevSnap.rows) sfx('order');
+    if (snap.tier > prevSnap.tier && !preview) sfx('level');
+  }
+  prevSnap = snap;
+  // hire ceremony: a roster version went up
+  const base = lastRoster || (mode === 'real' ? JSON.parse(localStorage.getItem('hq_roster_real') || 'null') : null) || {};
+  (d.roster || []).forEach(r => { const was = base[r.name] || 1; if (r.version > was) { PX.ceremony(r.name); toast(`NEW HIRE: ${r.name.toUpperCase()} v${r.version} moves in!`); sfx('level'); } });
+  lastRoster = Object.fromEntries((d.roster || []).map(r => [r.name, r.version]));
+  if (mode === 'real' && !d.asof) localStorage.setItem('hq_roster_real', JSON.stringify(lastRoster));
+}
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => { t.hidden = true; }, 4000); }
+
+// ---------------- chiptune (WebAudio, muted by default; starts only after a click)
+$('sound').onclick = () => { sound = !sound; $('sound').textContent = sound ? '♪ ON' : '♪ OFF'; $('sound').classList.toggle('on', sound);
+  if (sound) { try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); sfx('lead'); } catch (e) { sound = false; } } };
+function sfx(kind) {
+  if (!sound || !actx) return;
+  const seq = {lead: [[660, .08], [880, .1]], order: [[523, .07], [659, .07], [784, .12]], coin: [[988, .06], [1319, .18]],
+    sad: [[392, .15], [330, .15], [262, .3]], level: [[523, .1], [659, .1], [784, .1], [1047, .25]]}[kind] || [];
+  let t = actx.currentTime + .02;
+  seq.forEach(([fq, dur]) => { const o = actx.createOscillator(), g = actx.createGain(); o.type = 'square'; o.frequency.value = fq;
+    g.gain.setValueAtTime(.06, t); g.gain.setValueAtTime(0, t + dur - .01); o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur); t += dur; });
+}
+
+// ---------------- day / night from US market hours (America/New_York)
+function marketPhase() {
+  if (['day', 'dawn', 'dusk', 'night'].includes(skyOverride)) return {phase: skyOverride, label: 'SKY PREVIEW: ' + skyOverride.toUpperCase()};
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit', hour12: false})
+    .formatToParts(new Date()).map(p => [p.type, p.value]));
+  const h = (+parts.hour % 24) + (+parts.minute) / 60, wd = parts.weekday;
+  const nice = new Date().toLocaleTimeString('en-US', {timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit'});
+  let phase, label;
+  if (wd === 'Sat' || wd === 'Sun') { phase = 'night'; label = 'WEEKEND · MARKET CLOSED'; }
+  else if (h >= 4 && h < 9.5) { phase = 'dawn'; label = 'PRE-MARKET'; }
+  else if (h >= 9.5 && h < 16) { phase = 'day'; label = 'MARKET OPEN'; }
+  else if (h >= 16 && h < 20) { phase = 'dusk'; label = 'AFTER HOURS'; }
+  else { phase = 'night'; label = 'MARKET CLOSED'; }
+  return {phase, label: `NY ${wd.toUpperCase()} ${nice} ET · ${label}`};
+}
+
+// ---------------- render
+function render() {
+  const d = data, p = d.pnl, realTier = d.tier.level, lvl = preview || realTier;
+  $('equity').textContent = money(p.equity);
+  const pct = d.balance_start ? 100 * p.total / d.balance_start : 0;
+  $('totalPct').textContent = (pct > 0 ? '+' : '') + pct.toFixed(2) + '%'; $('totalPct').className = 'chip ' + cls(pct);
+  $('total').textContent = money(p.total, true); $('total').className = cls(p.total);
+  $('today').textContent = money(p.today, true); $('today').className = cls(p.today);
+  $('winrate').textContent = p.winrate == null ? '–' : p.winrate + '%';
+  $('open').textContent = p.open_count; $('dd').textContent = p.drawdown_pct + '%'; $('dd').className = p.drawdown_pct > 0 ? 'neg' : '';
+  $('srcNote').textContent = `Start ${money(d.balance_start)} · ${d.balance_source}`;
+  const tv = p.source === 'tradovate';
+  $('pnlStamp').hidden = !tv; $('ledgerDiff').hidden = !(tv && p.ledger_diff);
+  if (tv) {
+    $('pnlStamp').className = 'stamp' + (p.stale ? ' stale' : '');
+    $('pnlStamp').textContent = `AS OF ${fmtTime(p.as_of)} · ${p.label.replace(/^from /, 'FROM ').toUpperCase()}${p.stale ? ' · OLDER THAN 1 DAY' : ''}`;
+    $('ledgerDiff').textContent = `⚠ Ledger differs by ${money(Math.abs(p.ledger_diff))}: ledger P&L ${money(p.ledger_total, true)} vs Tradovate ${money(p.total, true)}. Showing Tradovate.`
+      + (p.starting_balance_mismatch ? ` Start balance in tradovate.json (${money(p.starting_balance_file)}) ≠ my-rules.md.` : '');
+  }
+  $('updated').textContent = (d.demo ? 'DEMO data built ' : 'Real data updated ') + fmtTime(d.generated_at) + (d.asof ? ` · REPLAY as of ${fmtDay(d.asof)}` : '');
+  $('limitBanner').hidden = !p.daily_limit_hit;
+  $('limitBanner').textContent = `DAILY LIMIT HIT: today's paper loss reached ${money(p.daily_limit_usd)} (2%). Per my-rules.md no more cards until tomorrow.`;
+  replayUI(d);
+  spark(d.equity_curve); openTrades(d); positions(d); leads(d); trophies(d);
+  const tier = d.tiers.find(t => t.level === lvl);
+  $('tierName').textContent = `LV${lvl} ${tier.name.toUpperCase()}`;
+  if (d.next_tier) {
+    const prev = d.tier.min_pnl || 0, span = d.next_tier.min_pnl - prev, prog = Math.max(0, Math.min(1, (p.total - prev) / span));
+    $('nextBar').style.width = (Math.floor(prog * 10) * 10) + '%';
+    $('nextText').textContent = `${money(Math.max(0, d.next_tier.min_pnl - p.total))} more paper profit → ${d.next_tier.name} (${d.next_tier.unlocks})`;
+  } else { $('nextBar').style.width = '100%'; $('nextText').textContent = 'MAX LEVEL! Sky Tower complete.'; }
+  ladder(d, lvl);
+  $('previewTag').hidden = !preview;
+  if (preview) { $('previewTag').innerHTML = `PREVIEW: ${esc(tier.name)} · not the real level <button id="endPrev">BACK</button>`; $('endPrev').onclick = () => { preview = null; worldKey = ''; render(); }; }
+  const hire = new Set(d.proposals.map(x => x.bot)), mp = marketPhase();
+  $('hud').textContent = mp.label;
+  worldState = {bots: Object.fromEntries(d.bots.map(b => [b.name, b])), gloom: !preview && (p.total < 0 || p.today < 0 || hire.size > 0),
+    rain: !preview && p.total < 0, hire, ghost: !!d.tiers.find(t => t.level === lvl + 1), phase: mp.phase};
+  world(d, lvl);
+  if (lastTier != null && realTier > lastTier && !preview && !d.asof) celebrate(d.tier.name);
+  lastTier = realTier; fire(d); chat(d);
+  if (openBot) openModal(openBot, true);
+}
+
+function world(d, lvl) {
+  const sky = $('sky'); scale = sky.clientWidth >= 600 ? 3 : 2;
+  const ap = d.autopilot || {};
+  const key = [lvl, sky.clientWidth, scale, mode, d.asof, [...worldState.hire].join(), JSON.stringify(ap), d.bots.map(b => b.mood + b.status + b.version).join()].join('|');
+  if (key === worldKey) return; worldKey = key;
+  const lay = PX.init($('world'), lvl, scale, {H: WORLD_H});
+  ghostY = PX.frame(worldState);
+  const S = scale, FH = PX.FH, byName = Object.fromEntries(d.bots.map(b => [b.name, b]));
+  let h = '';
+  lay.floors.forEach(fl => {
+    const top = (fl.y + 1) * S, height = (FH - 2) * S;
+    const left = lay.compact ? (lay.rx + lay.rw - 47) * S : lay.labelX * S, width = lay.compact ? 46 * S : lay.LW * S;
+    const cmp = lay.compact ? ' compact' : '';
+    if (fl.bot) {
+      const b = byName[fl.bot], warn = worldState.hire.has(fl.bot), v = b.version > 1 ? ` v${b.version}` : '';
+      h += `<div class="tag${cmp} ${warn ? 'warn' : ''}" data-bot="${esc(fl.bot)}" title="Click for ${esc(fl.bot)}'s floor details" style="--c:${PX.COL[fl.bot]};left:${left}px;top:${top}px;width:${width}px;height:${height}px">
+        <b>${esc(fl.bot.toUpperCase())}${v}${warn ? ' · FOR HIRE?' : ''}</b><span>${esc(fl.room.name)} · ${esc(b.role)}</span><em>${esc(b.status)}</em></div>`;
+      h += `<div class="hot" data-bot="${esc(fl.bot)}" style="left:${lay.rx * S}px;top:${top}px;width:${(lay.compact ? lay.rw - 48 : lay.rw) * S}px;height:${height}px"></div>`;
+      if (warn) h += `<div class="forhire" style="left:${(lay.rx + 68) * S}px;top:${(fl.y + 3) * S}px">FOR HIRE?</div>`;
+    } else if (fl.key === 'lobby') {
+      const st = (ap.state || 'NOT SET'), stc = st === 'ON' ? 'on' : st === 'PAUSED' ? 'paused' : 'off';
+      const lp = Math.min(100, ap.loss_used_pct || 0);
+      h += `<div class="apboard${cmp}" title="${esc(ap.source || '')}${ap.raw ? ' · ' + esc(ap.raw) : ''}" style="left:${(lay.rx + (lay.compact ? 30 : 38)) * S}px;top:${(fl.y + 2) * S}px;width:${(lay.rw - (lay.compact ? 52 : 76)) * S}px;height:${(FH - 5) * S}px">
+        <div><b class="${stc}">AUTOPILOT ${esc(st)}</b><span title="autopilot trades today">${ap.used_today ?? 0}/${ap.max_today ?? 5}</span></div>
+        <div class="lossbar" title="Today's loss vs the 2% daily limit"><i style="width:${Math.round(lp / 10) * 10}%"></i></div><small>2% LOSS LIMIT: ${lp}% USED</small></div>`;
+      if (!lay.compact) h += `<div class="tag amen" style="--c:#c8d0f0;left:${left}px;top:${top}px;width:${width}px;height:${height}px"><b>LOBBY</b><span>Ground floor · lift to every floor</span><em>Autopilot board is display-only</em></div>`;
+    } else if (!lay.compact) {
+      const t = d.tiers.find(t => t.level === fl.room.unlock);
+      h += `<div class="tag amen" style="--c:#c8d0f0;left:${left}px;top:${top}px;width:${width}px;height:${height}px"><b>${esc(fl.room.name)}</b><span>Unlocked at ${esc(t ? t.label : '')}</span><em>Bitizens relaxing</em></div>`;
+    } else h += `<div class="tag compact amen" style="--c:#c8d0f0;left:${left}px;top:${top}px;width:${width}px;height:${height}px"><b>${esc(fl.room.name)}</b></div>`;
+  });
+  if (lvl >= 2) h += `<div class="bill ${lvl >= 5 ? 'neon' : ''}" style="left:${(lay.x0 + 35) * S}px;top:${(lay.roofY - 29) * S}px;width:${64 * S}px;height:${11 * S}px">${lvl >= 5 ? 'CHEN TOWER' : "CAM'S DESK"}${d.demo ? ' ·DEMO' : ''}</div>`;
+  if (ghostY != null) { const nt = d.tiers.find(t => t.level === lvl + 1);
+    h += `<div class="ghost" style="left:${lay.x0 * S}px;top:${ghostY * S}px;width:${PX.TW * S}px;height:${FH * S}px">NEXT: ${esc(nt.unlocks.split(' + ')[0].toUpperCase())} AT ${esc(nt.label.split(' ')[0])}</div>`; }
+  h += `<div class="bubble" id="bubble"></div>`;
+  $('overlay').innerHTML = h;
+  $('sky').style.height = WORLD_H * S + 'px';
+  $('overlay').querySelectorAll('[data-bot]').forEach(el => {
+    el.onclick = () => openModal(el.dataset.bot);
+    el.onmouseenter = () => { if (lay.compact) return; const b = byName[el.dataset.bot], bub = $('bubble');
+      bub.innerHTML = `<b>${esc(b.name.toUpperCase())}</b> ${esc(b.role)}<br><i>${esc(b.status)}</i>${b.last_text ? `<br>“${esc(b.last_text)}”` : ''}<br><small>Click for details</small>`;
+      bub.style.left = Math.max(4, parseInt(el.style.left) - 260) + 'px'; bub.style.top = Math.max(4, parseInt(el.style.top) - 20) + 'px'; bub.classList.add('on'); };
+    el.onmouseleave = () => $('bubble').classList.remove('on');
+  });
+}
+setInterval(() => { if (worldState && worldKey) PX.frame(worldState); }, TICK_MS);
+setInterval(() => { if (data) { const mp = marketPhase(); $('hud').textContent = mp.label; if (worldState) worldState.phase = mp.phase; } }, 30000);
+
+// ---------------- history replay
+function replayUI(d) {
+  const days = liveDays.length ? liveDays : (d.days || []), r = $('replay');
+  r.max = Math.max(0, days.length - 1);
+  if (document.activeElement !== r) r.value = replayAsof ? Math.max(0, days.indexOf(replayAsof)) : r.max;
+  r.disabled = days.length < 2;
+  $('replayLabel').textContent = replayAsof ? fmtDay(replayAsof).toUpperCase() : (days.length < 2 ? 'LIVE · 1 DAY OF HISTORY' : 'LIVE');
+  $('replayBanner').hidden = !replayAsof;
+  $('replayBanner').innerHTML = replayAsof ? `⏪ REPLAY: tower as of end of ${esc(fmtDay(replayAsof))} (Sydney) · <button id="goLive">BACK TO LIVE</button>` : '';
+  if (replayAsof) $('goLive').onclick = () => { replayAsof = null; worldKey = ''; poll(); };
+}
+$('replay').addEventListener('input', () => { const days = liveDays.length ? liveDays : (data?.days || []), i = +$('replay').value;
+  $('replayLabel').textContent = i >= days.length - 1 ? 'LIVE' : fmtDay(days[i]).toUpperCase(); });
+$('replay').addEventListener('change', () => { const days = liveDays.length ? liveDays : (data?.days || []), i = +$('replay').value;
+  replayAsof = i >= days.length - 1 ? null : days[i]; worldKey = ''; poll(); });
+
+function ladder(d, lvl) {
+  $('ladder').innerHTML = d.tiers.map(t => `<button class="${t.level <= d.tier.level ? 'reached' : ''} ${t.level === lvl ? 'current' : ''}" data-l="${t.level}" title="${esc(t.unlocks)} · click to preview">
+      <canvas class="px" data-icon="${t.level}"></canvas><span>LV${t.level}<br>${esc(t.name.toUpperCase())}<small>${esc(t.label)}</small></span></button>`).join('');
+  $('ladder').querySelectorAll('canvas[data-icon]').forEach(c => PX.icon(c, +c.dataset.icon));
+  $('ladder').querySelectorAll('button').forEach(b => b.onclick = () => { const l = +b.dataset.l; preview = l === d.tier.level ? null : l; worldKey = ''; render(); });
+}
+
+function spark(curve) {
+  const c = $('spark'), w = Math.max(60, Math.floor(c.parentElement.clientWidth / 3)), h = 32;
+  c.width = w; c.height = h; c.style.height = h * 3 + 'px'; const x = c.getContext('2d');
+  const R = (a, b, cw, ch, col) => { x.fillStyle = col; x.fillRect(a, b, cw, ch); };
+  for (let gx = 0; gx < w; gx += 8) for (let gy = 0; gy < h; gy += 8) R(gx, gy, 1, 1, '#2a3266');
+  const has = curve && curve.length >= 2; $('sparkEmpty').style.display = has ? 'none' : 'grid';
+  if (!has) { R(0, 16, w, 1, '#3d4a86'); return; }
+  const ys = curve.map(q => q.equity), mn = Math.min(...ys), mx = Math.max(...ys), rg = (mx - mn) || 1;
+  const col = ys[ys.length - 1] >= ys[0] ? '#4cff8f' : '#ff4d5e', fill = ys[ys.length - 1] >= ys[0] ? '#1d6b40' : '#6b1f2b';
+  const P = ys.map((v, i) => [Math.round(i * (w - 3) / (ys.length - 1)), Math.round(28 - (v - mn) / rg * 24)]);
+  for (let i = 0; i < P.length - 1; i++) { const [x1, y1] = P[i], [x2, y2] = P[i + 1];
+    for (let xx = x1; xx < x2; xx++) for (let yy = y1 + 2; yy < h; yy++) if ((xx + yy) % 2 === 0) R(xx, yy, 1, 1, fill);
+    R(x1, y1, x2 - x1 + 1, 2, col); R(x2, Math.min(y1, y2), 2, Math.abs(y2 - y1) + 2, col); }
+  const [lx, ly] = P[P.length - 1]; R(lx - 1, ly - 1, 3, 4, '#fff');
+}
+
+function openTrades(d) {
+  const ot = d.open_trades, ct = d.closed_trades;
+  if (!ot.length && !ct.length) {
+    $('openTrades').innerHTML = `<div class="empty">No paper trades yet. When Cam replies <b>PAPER BUY #id</b>, Chief logs it in <code>desk/paper-ledger.csv</code> and it shows up here. The first new floor unlocks at +$500 paper profit.</div>`; return; }
+  const row = t => `<tr><td class="lid">#${esc(t.lead_id)}</td><td>${esc(t.ticker)}</td><td>${esc(t.side)}</td><td>${t.entry ?? '–'}</td><td>${t.stop ?? '–'}</td><td>${t.target ?? '–'}</td><td class="${cls(t.pnl)}">${t.pnl == null ? esc(t.status || 'open') : money(t.pnl, true)}</td></tr>`;
+  $('openTrades').innerHTML = `<div class="tscroll"><table><tr><th>LEAD</th><th>TICKER</th><th>SIDE</th><th>ENTRY</th><th>STOP</th><th>TGT</th><th>P&amp;L</th></tr>${ot.map(row).join('')}${ct.slice(-5).reverse().map(row).join('')}</table></div>`;
+}
+
+// ---------------- positions (ledger + optional last-price hook)
+function positions(d) {
+  const hk = d.positions_hook || {};
+  const tvp = d.pnl.source === 'tradovate';
+  $('posSrc').innerHTML = tvp ? `Read-only snapshot from <code>data/tradovate.json</code> (Tradovate Simulation, read from screen). Ledger keeps the trade history.`
+    : `Read-only, from <code>paper-ledger.csv</code>. The site can't read Tradovate.`;
+  $('hookNote').innerHTML = tvp ? `As of ${esc(fmtTime(hk.updated))}${d.pnl.stale ? ' · <b class="neg">older than 1 day</b>' : ''}` : hk.present ? `Last prices from <code>data/positions.json</code>${hk.updated ? ' · updated ' + esc(fmtTime(hk.updated)) : ''}`
+    : `No last price yet. Chief can write <code>data/positions.json</code> later; the site only reads it.`;
+  const ps = d.positions || [];
+  if (!ps.length) { $('positions').innerHTML = `<div class="empty">${tvp ? 'No open positions in the Tradovate snapshot.' : 'No open demo positions in the ledger.'}</div>`; return; }
+  $('positions').innerHTML = ps.map(p => {
+    const ok = p.stop != null && p.target != null && p.entry != null && p.target !== p.stop;
+    const at = v => Math.max(0, Math.min(100, 100 * (v - p.stop) / (p.target - p.stop)));
+    const e = ok ? at(p.entry) : 50, l = ok && p.last != null ? at(p.last) : null;
+    return `<div class="posi">
+      <div class="posH">${p.lead_id ? `<span class="lid">#${esc(p.lead_id)}</span>` : ''} <b>${esc(p.ticker)}</b> <span class="k">${esc(p.side || '?')}</span> <span>size ${p.size ?? '–'}</span>
+        ${p.last != null ? `<span>last ${p.last}</span>` : ''}${p.unrealized != null ? `<span class="${cls(p.unrealized)}">open ${money(p.unrealized, true)}</span>` : ''}</div>
+      ${ok ? `<div class="pbar"><i class="red" style="width:${e}%"></i><i class="grn" style="left:${e}%;width:${100 - e}%"></i>
+        <b class="mk entry" style="left:${e}%" title="entry ${p.entry}"></b>${l != null ? `<b class="mk last" style="left:${l}%" title="last ${p.last}"></b>` : ''}</div>
+      <div class="pscale"><span class="neg">STOP ${p.stop}</span><span>ENTRY ${p.entry}${l != null ? ' · ▲ LAST ' + p.last : ''}</span><span class="pos">TGT ${p.target}</span></div>`
+      : `<div class="srcNote">Needs entry, stop and target in the ledger to draw the bar.</div>`}</div>`; }).join('');
+}
+
+// ---------------- lead tracker
+function leads(d) {
+  const L = d.leads || [];
+  if (!L.length) { $('leads').innerHTML = `<div class="empty">No lead IDs in the feed yet. Each strip fills in as Scout, News, Sentiment and Charts report and Skeptic gives a verdict.</div>`; return; }
+  const who = ['Scout', 'News', 'Sentiment', 'Charts'];
+  $('leads').innerHTML = L.map(l => {
+    const v = l.verdict, vc = v === 'APPROVE' ? 'ok' : v === 'REDUCE' ? 'mid' : v ? 'bad' : 'wait';
+    const tr = l.trade ? (l.trade.status === 'open' ? '<span class="k">OPEN</span>' : `<span class="${cls(l.trade.pnl)}">${money(l.trade.pnl, true)}</span>`) : '';
+    return `<div class="leadrow ${l.complete ? 'done' : ''}"><span class="lid">#${esc(l.lead_id)}</span><span class="ltk" title="${esc(l.ticker)}">${esc(l.ticker || '–')}</span>
+      <span class="lights">${who.map(b => `<i class="lt ${l.reports[b] ? 'on' : ''}" style="--c:${PX.COL[b]}" title="${b}: ${l.reports[b] ? 'reported ' + esc(fmtTime(l.reports[b])) : 'waiting'}"></i>`).join('')}</span>
+      <span class="vbadge ${vc}" title="${esc(l.verdict_text || 'waiting for Skeptic')}">${esc(v || '...')}</span>${tr}${l.complete ? '<span class="star">★</span>' : ''}</div>`; }).join('');
+}
+
+// ---------------- achievements
+const BADGE = {
+  doors: ['..####..', '.#....#.', '.#....#.', '.#...##.', '.#....#.', '.#....#.', '.#....#.', '########'],
+  lead1: ['..###...', '.#...#..', '#.....#.', '#.....#.', '.#...#..', '..####..', '.....##.', '......##'],
+  full: ['...##...', '...##...', '########', '.######.', '..####..', '.######.', '.##..##.', '##....##'],
+  gate: ['########', '#......#', '#..##..#', '#.####.#', '#..##..#', '.#....#.', '..#..#..', '...##...'],
+  trade1: ['..####..', '.#....#.', '#..##..#', '#.#....#', '#.#....#', '#..##..#', '.#....#.', '..####..'],
+  win1: ['...##...', '..####..', '.######.', '########', '...##...', '...##...', '...##...', '...##...'],
+  streak5: ['...#....', '..##..#.', '..###.#.', '.######.', '.######.', '########', '.######.', '..####..'],
+  perfect: ['#..##..#', '.#....#.', '..####..', '#.####.#', '#.####.#', '..####..', '.#....#.', '#..##..#'],
+  floor1: ['...##...', '..####..', '.######.', '.#.##.#.', '.######.', '.#.##.#.', '.######.', '.##..##.'],
+  sky: ['...##...', '..#..#..', '..#..#..', '..####..', '.##..##.', '.#....#.', '##.##.##', '#..##..#'],
+  leads10: ['########', '#......#', '########', '#......#', '########', '#......#', '########', '........'],
+  comeback: ['.##..##.', '########', '########', '########', '.######.', '..####..', '...##...', '........'],
+  discipline: ['..####..', '.#....#.', '.#....#.', '########', '###..###', '###..###', '########', '########'],
+};
+const BCOL = {doors: '#c8d0f0', lead1: '#5ab0ff', full: '#ffd23f', gate: '#ff8a3d', trade1: '#ffd23f', win1: '#4cff8f', streak5: '#ff5d3d', perfect: '#ffe066',
+  floor1: '#b77dff', sky: '#ff7ac0', leads10: '#7fd3ff', comeback: '#ff4d5e', discipline: '#4cd98a'};
+function badgeURL(id, got) {
+  const c = document.createElement('canvas'); c.width = 12; c.height = 12; const x = c.getContext('2d');
+  x.fillStyle = got ? '#2a1d00' : '#151a33'; x.fillRect(0, 0, 12, 12); x.fillStyle = got ? '#c99a00' : '#2a3266'; x.fillRect(0, 0, 12, 1); x.fillRect(0, 11, 12, 1); x.fillRect(0, 0, 1, 12); x.fillRect(11, 0, 1, 12);
+  (BADGE[id] || BADGE.full).forEach((row, j) => [...row].forEach((ch, i) => { if (ch === '#') { x.fillStyle = got ? BCOL[id] || '#ffd23f' : '#3a4270'; x.fillRect(2 + i, 2 + j, 1, 1); } }));
+  return c.toDataURL();
+}
+function trophies(d) {
+  const A = d.achievements || [], got = A.filter(a => a.got).length;
+  $('trophyCount').textContent = `${got}/${A.length}`;
+  $('trophies').innerHTML = A.map(a => `<div class="badge2 ${a.got ? 'got' : ''}" title="${esc(a.desc)}"><img class="px" src="${badgeURL(a.id, a.got)}" alt=""><b>${esc(a.got ? a.name : '???')}</b><small>${esc(a.desc)}</small></div>`).join('');
+}
+
+// ---------------- floor modal
+function openModal(name, refresh) {
+  const b = data && data.bots.find(x => x.name === name); if (!b) return;
+  openBot = name; const room = PX.ROOM[name], st = b.stats, prop = data.proposals.find(p => p.bot === name);
+  const leadMap = Object.fromEntries((data.leads || []).map(l => [l.lead_id, l]));
+  const latest = b.reports && b.reports[0];
+  $('modalBody').innerHTML = `
+    <div class="mHead" style="--c:${PX.COL[name]}"><img class="mAv px" src="${avatar(name)}" alt=""><div><h3>${esc(name.toUpperCase())}${b.version > 1 ? ' v' + b.version : ''}</h3>
+      <div class="srcNote">${esc(room.name)} · ${esc(b.role)}</div><div class="srcNote">${esc(b.job)}</div></div></div>
+    ${prop ? `<div class="flag">⚠ Fire/rehire proposal open: ${esc(prop.why)} Cam decides in chat with Chief.</div>` : ''}
+    ${data.demo ? '<div class="flag">DEMO DATA · fake example</div>' : ''}
+    <div class="stats m"><div><label>LEADS</label><b>${b.leads.length}</b></div><div><label>TRADES</label><b>${st.trades}</b></div>
+      <div><label>WIN%</label><b>${st.winrate == null ? '–' : st.winrate + '%'}</b></div><div><label>NET</label><b class="${cls(st.net)}">${money(st.net, true)}</b></div></div>
+    <div class="eyebrow msec">LATEST REPORT</div>
+    ${latest ? `<div class="mb" style="--c:${PX.COL[name]}"><div class="mh"><span class="k ${esc(latest.kind)}">${esc(latest.kind)}</span>${latest.lead_id ? `<span class="lid">#${esc(latest.lead_id)}</span>` : ''}<span>${fmtTime(latest.ts)}</span></div><div class="mt">${esc(latest.text)}</div></div>` : '<div class="empty">No reports from this bot in the feed yet.</div>'}
+    <div class="eyebrow msec">LEADS WORKED</div>
+    <div class="chips">${b.leads.length ? b.leads.map(l => { const L = leadMap[l]; return `<span class="chip2 ${L && L.complete ? 'done' : ''}">#${esc(l)}${L && L.verdict ? ' · ' + esc(L.verdict) : ''}</span>`; }).join('') : '<span class="srcNote">None yet</span>'}</div>
+    <div class="eyebrow msec">TRADES ON ITS LEADS</div>
+    ${b.trades.length ? `<div class="tscroll"><table><tr><th>LEAD</th><th>TICKER</th><th>DATE</th><th>P&amp;L</th></tr>${b.trades.map(t => `<tr><td class="lid">#${esc(t.lead_id)}</td><td>${esc(t.ticker)}</td><td>${esc(t.date)}</td><td class="${cls(t.pnl)}">${money(t.pnl, true)}</td></tr>`).join('')}</table></div>` : '<div class="srcNote">No closed paper trades on its leads yet.</div>'}
+    ${b.reports.length > 1 ? `<div class="eyebrow msec">EARLIER</div>${b.reports.slice(1, 5).map(r => `<div class="srcNote">${fmtTime(r.ts)} ${r.lead_id ? '#' + esc(r.lead_id) : ''} · ${esc(r.text.slice(0, 140))}</div>`).join('')}` : ''}
+    <p class="fine">Read-only view built from feed.jsonl and paper-ledger.csv. Nothing here changes the bot.</p>`;
+  $('modal').hidden = false; if (!refresh) $('modalClose').focus();
+}
+function closeModal() { openBot = null; $('modal').hidden = true; }
+$('modalClose').onclick = closeModal;
+$('modal').addEventListener('click', e => { if (e.target === $('modal')) closeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+function fire(d) {
+  $('firePanel').classList.toggle('alert', d.proposals.length > 0);
+  if (!d.proposals.length) { $('fireBody').innerHTML = `<div class="ok">★ Nobody's on the chopping block. All six bots keep their floors.</div><div class="rule"><b>Rule:</b> ${esc(d.fire_rule)}</div>`; return; }
+  $('fireBody').innerHTML = d.proposals.map(p => `<div class="prop">
+    <span class="pill">PROPOSAL · NEEDS CAM'S OK</span>
+    <h3><img class="mini px" src="${avatar(p.bot)}" alt="">FIRE ${esc(p.bot.toUpperCase())} → HIRE ${esc(p.replacement_name.toUpperCase())}</h3>
+    <div><b>Why:</b> ${esc(p.why)}</div>
+    ${p.also_flagged && p.also_flagged.length ? `<div class="rule">Also past the rule (one proposal at a time): ${p.also_flagged.map(esc).join(', ')}</div>` : ''}
+    <div style="margin-top:6px"><b>What ${esc(p.replacement_name)} does better:</b></div>
+    <ul>${p.improvements.map(i => `<li>${esc(i)}</li>`).join('')}</ul>
+    <details><summary>SUGGESTED DESCRIPTION</summary><p>${esc(p.suggested_description)}</p></details>
+    <div class="how">To act on it, tell Chief in chat: <code>${esc(p.approve_hint.replace(/^Reply to Chief: /, ''))}</code>. Nothing happens unless you do.</div>
+  </div>`).join('') + `<div class="rule"><b>Rule:</b> ${esc(d.fire_rule)}</div>`;
+}
+
+function chat(d) {
+  const bots = ['All', ...d.bots.map(b => b.name)];
+  $('filters').innerHTML = bots.map(n => `<button class="${n === chatFilter ? 'on' : ''}" style="--c:${PX.COL[n] || '#5ab0ff'}" data-f="${n}">${n.toUpperCase()}</button>`).join('');
+  $('filters').querySelectorAll('button').forEach(b => b.onclick = () => { chatFilter = b.dataset.f; lastChatKey = ''; chat(d); });
+  const items = d.chat.filter(m => chatFilter === 'All' || m.bot === chatFilter).slice().reverse();
+  const key = chatFilter + items.length + (items[0]?.ts || '') + (items[0]?.text || '');
+  if (key === lastChatKey) return; lastChatKey = key;
+  if (!items.length) { $('chat').innerHTML = '<div class="empty">No desk messages yet. Bots append to desk/feed.jsonl and they appear here within a few seconds.</div>'; return; }
+  $('chat').innerHTML = items.map(m => { const c = PX.COL[m.bot] || '#5ab0ff';
+    const av = PX.COL[m.bot] ? `<img class="av px" src="${avatar(m.bot)}" alt="${esc(m.bot)}">` : `<div class="av"></div>`;
+    return `<div class="msg" style="--c:${c}">${av}<div class="mb">
+      <div class="mh"><b>${esc(m.bot.toUpperCase())}</b><span class="k ${esc(m.kind)}">${esc(m.kind)}</span>${m.lead_id ? `<span class="lid">#${esc(m.lead_id)}</span>` : ''}<span>${fmtTime(m.ts)}</span></div>
+      <div class="mt">${esc(m.text)}</div>${m.flag ? `<div class="flag">⚠ ${esc(m.flag)}</div>` : ''}</div></div>`; }).join('');
+}
+
+function celebrate(name) {
+  const c = $('confetti'), cols = ['#ffd23f', '#4cff8f', '#5ab0ff', '#ff7ac0', '#b77dff'];
+  for (let i = 0; i < 120; i++) { const e = document.createElement('i'); e.style.left = Math.floor(Math.random() * 100) + 'vw';
+    e.style.background = cols[i % cols.length]; e.style.animationDelay = (Math.floor(Math.random() * 8) / 10) + 's'; c.appendChild(e); }
+  const b = document.createElement('div'); b.className = 'levelup'; b.textContent = `LEVEL UP! ${name.toUpperCase()}`; document.body.appendChild(b);
+  setTimeout(() => { c.innerHTML = ''; b.remove(); }, 3200);
+}
+(function logo() { const c = $('logo'); PX.icon(c, 5); c.style.width = '32px'; c.style.height = '48px'; })();
+let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { worldKey = ''; data && render(); }, 150); });
+setMode(mode); setInterval(poll, POLL_MS);
+if (Q.get('open')) { const want = Q.get('open'); const t = setInterval(() => { if (data) { clearInterval(t); openModal(want); } }, 200); }
