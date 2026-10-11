@@ -1,7 +1,7 @@
 // Pixel tower engine (original Tiny-Tower-style cross-section). Pure drawing: no network, no actions.
 'use strict';
 const PX = (() => {
-  const FH = 18, TW = 140, SHAFT = 12, GROUND = 18;
+  const FH = 18, TW = 140, SHAFT = 12, GROUND = 18, LED = 8;
   const BOT_ORDER = ['Scout', 'News', 'Sentiment', 'Charts', 'Skeptic', 'Chief']; // bottom -> top
   const COL = {Chief: '#ffd23f', Scout: '#5ab0ff', News: '#b77dff', Sentiment: '#ff7ac0', Charts: '#4cd98a', Skeptic: '#ff8a3d'};
   const ROOM = {
@@ -34,7 +34,7 @@ const PX = (() => {
   const PALS = [['#3a2a1a', '#e74c3c'], ['#f1c40f', '#3498db'], ['#1d1d1d', '#9b59b6'], ['#a0522d', '#1abc9c'], ['#ecf0f1', '#e67e22'], ['#6b3e26', '#2ecc71'], ['#222', '#f78fb3']];
   const SKINS = ['#f2c28b', '#e0a370', '#c98e5a', '#8d5a3a', '#f5cfa0'];
 
-  let ctx, W, H, lay, f = 0, elev = null, walkers = [], car = 0, cer = null, coins = [], slumpUntil = {}, phase = 'day';
+  let ctx, W, H, lay, f = 0, elev = null, walkers = [], car = 0, cer = null, coins = [], slumpUntil = {}, phase = 'day', moves = {}, season = null;
   const rng = s => () => (s = (s * 1664525 + 0x3C6EF35F) >>> 0) / 2 ** 32;
   const R = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(x | 0, y | 0, w | 0, h | 0); };
 
@@ -133,6 +133,14 @@ const PX = (() => {
     [[10, 22, 0], [120, 40, 37], [220, 16, 71]].forEach(([cx, cy, off]) => { const x = ((cx + Math.floor((f + off) / 3)) % (W + 40)) - 30; cloud(x, cy, gloom || dark); });
   }
   function cloud(x, y, g) { const n = phase === 'night'; const c = n ? '#2a3266' : g ? '#9aa1ad' : '#fff', s = n ? '#1f2752' : g ? '#80878f' : '#d8ecfb'; R(x + 4, y, 7, 2, c); R(x + 2, y + 2, 14, 2, c); R(x, y + 4, 20, 3, c); R(x, y + 7, 20, 1, s); }
+  function snow() { const r = rng(17); for (let i = 0; i < 70; i++) { const x = (Math.floor(r() * W) + Math.round(Math.sin((f + i * 9) / 8) * 2) + W) % W, y = (Math.floor(r() * H) + f) % lay.groundY; R(x, y, 1, 1, '#fff'); }
+    R(0, lay.groundY - 1, W, 1, '#f4f6ff'); }
+  function seasonSky() {
+    if (season === 'halloween') for (let k = 0; k < 4; k++) { const bx = (f * (2 + k % 2) + k * 70) % (W + 20) - 10, by = 20 + k * 14 + Math.round(Math.sin((f + k * 5) / 3) * 3), up = (f + k) % 4 < 2;
+      R(bx + 2, by, 2, 2, '#1a1020'); R(bx, by + (up ? -1 : 1), 2, 1, '#1a1020'); R(bx + 4, by + (up ? -1 : 1), 2, 1, '#1a1020'); }
+    if (season === 'valentine') for (let k = 0; k < 6; k++) { const hx = (k * 53 + 20) % W, hy = lay.groundY - 10 - ((f * 1 + k * 31) % (lay.groundY - 20));
+      R(hx, hy, 1, 1, '#ff7ac0'); R(hx + 2, hy, 1, 1, '#ff7ac0'); R(hx, hy + 1, 3, 1, '#ff7ac0'); R(hx + 1, hy + 2, 1, 1, '#ff7ac0'); }
+  }
   function rain() { const r = rng(11); for (let i = 0; i < 90; i++) { const x = Math.floor(r() * W), y = (Math.floor(r() * H) + f * 5) % lay.groundY; R(x, y, 1, 3, '#cfe3ff'); } }
   function ground() {
     const g = lay.groundY;
@@ -233,9 +241,18 @@ const PX = (() => {
   function drawFloor(fl, d) {
     const x = lay.rx, y = fl.y + 1, w = lay.rw, h = FH - 3, s = fl.y + FH - 2;
     wallpaper(fl, x, y, w, h);
+    if (season === 'christmas') for (let i = 2; i < w; i += 6) R(x + i, y, 1, 1, ['#ff3b3b', '#4cff8f', '#ffd23f', '#5ab0ff'][(i / 6 + (f >> 1)) % 4 | 0]);
     R(x, fl.y, w, 1, '#fff8e0'); for (let i = 10; i < w; i += 30) R(x + i, fl.y + 1, 4, 1, '#fff6a0');
     const fn = ROOMDRAW[fl.key]; if (fn) fn(x, y, w, s);
-    if (fl.bot) {
+    const away = fl.bot && d.away && d.away.has(fl.bot), mv = fl.bot && moves[fl.bot];
+    if (fl.bot && (away || mv)) {
+      desk(x + 48, s - 5, fl.bot === 'Chief' ? '#6b2f1a' : '#8b5a2b', '#24304a');
+      if (mv) { // walk to/from the lift (x of shaft door) over ~40 ticks
+        mv.t++; const p = Math.min(1, mv.t / 40), from = mv.out ? x + 52 : x + 1, to = mv.out ? x + 1 : x + 52;
+        drawBot(fl.bot, Math.round(from + (to - from) * p), s - 10, p >= 1 && !mv.out ? 'busy' : 'walk', f, (d.bots[fl.bot] || {}).face);
+        if (p >= 1) delete moves[fl.bot];
+      }
+    } else if (fl.bot) {
       const b = d.bots[fl.bot] || {mood: 'idle'};
       const mood = (slumpUntil[fl.bot] || 0) > f ? 'slump' : b.mood;
       if (cer && cer.bot === fl.bot) {
@@ -249,9 +266,16 @@ const PX = (() => {
         desk(x + 48, s - 5, fl.bot === 'Chief' ? '#6b2f1a' : '#8b5a2b', mood === 'busy' ? (f % 2 ? '#4cff8f' : '#2bbf6a') : '#24304a');
       }
     }
+    if (d.spot && fl.bot && d.spot.has(fl.bot) && !away) { // lead-of-the-day spotlight
+      ctx.globalAlpha = .28; for (let j = 0; j < h; j++) R(x + 55 - (j >> 1), y + j, 3 + j, 1, '#fff6a0'); ctx.globalAlpha = 1;
+      R(x + 55, y, 3, 1, '#ffd23f'); if (f % 4 < 2) { R(x + 66, y + 2, 1, 3, '#ffd23f'); R(x + 65, y + 3, 3, 1, '#ffd23f'); }
+    }
+    if (d.dim && d.dim.has(fl.key)) { ctx.globalAlpha = .55; R(x, y - 1, w, h + 2, '#060a24'); ctx.globalAlpha = 1;
+      if (fl.i % 2) R(x + 20, y + 3, 2, 2, '#fff6a0'); }
     R(x, s, w, 2, '#4a3b2f'); R(x, s, w, 1, '#6b5a4a');
   }
 
+  let risk = 0;
   function drawShaft() {
     const sx = lay.x0 + 3, top = lay.roofY, bot = lay.groundY;
     R(sx, top, SHAFT, bot - top, '#2a2d3a'); R(sx + 3, top, 1, bot - top, '#555a6e'); R(sx + 8, top, 1, bot - top, '#555a6e');
@@ -263,10 +287,18 @@ const PX = (() => {
     sprite(WALK, sx + 3, ey + 4, {h: '#222', s: '#f2c28b', k: '#1a1020', c: '#5ab0ff'}); sprite(LEGS[0], sx + 3, ey + 10, {p: '#2d2f4a', k: '#1a1020'});
     if (elev.wait > 0) { R(sx + 1, ey + 1, 2, FH - 5, '#d9c9a8'); R(sx + SHAFT - 3, ey + 1, 2, FH - 5, '#d9c9a8'); }
     else { R(sx + 1, ey + 1, 5, FH - 5, '#d9c9a8'); R(sx + 6, ey + 1, 5, FH - 5, '#cdbd9c'); }
+    // risk meter: rises with today's loss toward the 2% daily limit (top of the shaft = limit hit)
+    const span = bot - top, rp = Math.max(0, Math.min(100, risk)), rh = Math.round(span * rp / 100);
+    R(sx, top, 2, span, '#11131c'); for (let q = 1; q < 4; q++) R(sx, bot - Math.round(span * q / 4), 3, 1, '#6b6f80');
+    const rc = rp >= 75 ? '#ff4d5e' : rp >= 40 ? '#ffb020' : '#4cff8f';
+    if (rh > 0) R(sx, bot - rh, 2, rh, rp >= 100 && f % 2 ? '#fff' : rc);
+    R(sx, top, 3, 1, '#ff4d5e');
   }
 
-  function drawRoof(level, ghostNext) {
-    const x = lay.x0, y = lay.roofY, w = TW;
+  function drawRoof(level, ghostNext, d) {
+    const x = lay.x0, w = TW, y = lay.roofY - LED;
+    R(x - 1, lay.roofY - LED, w + 2, LED, '#0b0b10'); R(x - 1, lay.roofY - LED, w + 2, 1, '#3a3d4a'); // LED ticker housing
+    for (let i = 0; i < w; i += 2) R(x + i, lay.roofY - 2, 1, 1, '#2a1a00');
     R(x - 1, y - 3, w + 2, 3, '#6b6f80'); R(x - 1, y - 3, w + 2, 1, '#9aa0b4');
     R(x + 8, y - 7, 10, 4, '#b0b5c4'); R(x + 9, y - 6, 8, 1, '#888'); // AC unit
     if (level >= 2) { R(x + 40, y - 18, 2, 15, '#444'); R(x + 92, y - 18, 2, 15, '#444'); R(x + 34, y - 30, 66, 13, '#1a1020'); R(x + 35, y - 29, 64, 11, '#ffd23f'); }
@@ -275,13 +307,21 @@ const PX = (() => {
     if (level >= 4) { for (let i = 0; i < 6; i++) R(x + 4 + i * 5, y - 5, 4, 2, i % 2 ? '#3fae4a' : '#2e8b57'); [x + 30, x + 104].forEach((px, i) => { R(px, y - 14, 1, 11, '#ddd'); R(px + 1, y - 14 + ((f + i) % 2), 5, 3, i ? '#5ab0ff' : '#ff4d5e'); }); }
     if (level >= 5) { const hx = x + 52, hy = y - 4; R(hx, y - 34, 30, 3, '#555'); R(hx + 13, y - 33, 2, 1, '#ffd23f');
       R(hx + 14, y - 42, 2, 8, '#ccc'); if (f % 4 < 2) { R(hx + 13, y - 45, 4, 3, '#ff3b3b'); R(hx + 12, y - 44, 6, 1, '#ff9b9b'); } else R(hx + 14, y - 44, 2, 2, '#7a1010'); }
+    const st = d.streak || {};
+    if (st.type === 'win' && st.n >= 3) [x + 2, x + w - 9, x + 60].forEach((fx, k) => { const ph = (f + k * 3) % 6, hgt = 6 + (ph < 3 ? ph : 6 - ph);
+      R(fx, y - 3 - hgt, 6, hgt, '#ff5d3d'); R(fx + 1, y - 3 - hgt + 2, 4, hgt - 2, '#ffb020'); R(fx + 2, y - 3 - hgt + 4, 2, hgt - 4, '#fff6a0'); if (ph % 2) R(fx + 2, y - 5 - hgt, 2, 2, '#ff5d3d'); });
+    if (st.type === 'loss' && st.n >= 3) for (let k = 0; k < 6; k++) { const t = (f + k * 7) % 42, sx = x + 12 + Math.round(Math.sin((t + k) / 5) * 3) + k % 2 * 4, sy = y - 8 - t;
+      ctx.globalAlpha = Math.max(0, .7 - t / 60); R(sx, sy, 4 + (t >> 4), 3 + (t >> 4), k % 2 ? '#6b6f80' : '#9aa0b4'); ctx.globalAlpha = 1; }
+    if (season === 'halloween') [x + 22, x + 68, x + 100].forEach(px => { R(px, y - 7, 6, 4, '#ff8a00'); R(px + 2, y - 8, 2, 1, '#2e8b57'); R(px + 1, y - 6, 1, 1, '#1a1020'); R(px + 4, y - 6, 1, 1, '#1a1020'); R(px + 2, y - 5, 2, 1, f % 4 < 2 ? '#ffd23f' : '#1a1020'); });
+    if (season === 'christmas') { for (let i = 0; i < w; i += 1) R(x + i, y - 4, 1, 1, '#fff'); R(x + w - 12, y - 14, 1, 11, '#5b3a1a'); for (let j = 0; j < 9; j++) R(x + w - 12 - (j >> 1), y - 13 + j, 1 + j, 1, '#2e8b57'); R(x + w - 12, y - 15, 1, 1, '#ffd23f'); }
+    if (season === 'valentine') { const hx = x + 64, hy = y - 12; R(hx, hy, 2, 2, '#ff4fa3'); R(hx + 3, hy, 2, 2, '#ff4fa3'); R(hx - 1, hy + 1, 7, 2, '#ff4fa3'); R(hx, hy + 3, 5, 1, '#ff4fa3'); R(hx + 1, hy + 4, 3, 1, '#ff4fa3'); R(hx + 2, hy + 5, 1, 1, '#ff4fa3'); }
     if (ghostNext) { const gy = y - 3 - FH - (level >= 2 ? 30 : 6); for (let i = 0; i < w; i += 4) { R(x + i, gy, 2, 1, '#ffffff'); R(x + i, gy + FH, 2, 1, '#ffffff'); }
       for (let j = 0; j < FH; j += 4) { R(x, gy + j, 1, 2, '#fff'); R(x + w - 1, gy + j, 1, 2, '#fff'); } return gy; }
     return null;
   }
 
   function fireworks() {
-    if (lay.level < 5) return; const r = rng(Math.floor(f / 10) + 5), t = f % 10; if (t > 6) return;
+    if (lay.level < 5 && season !== 'newyear') return; const r = rng(Math.floor(f / 10) + 5), t = f % 10; if (t > 6) return;
     for (let k = 0; k < 2; k++) { const cx = 20 + Math.floor(r() * (W - 40)), cy = 14 + Math.floor(r() * 40), col = ['#ff4fd8', '#ffd23f', '#4cff8f', '#5ab0ff'][Math.floor(r() * 4)];
       for (let a = 0; a < 8; a++) { const dx = Math.round(Math.cos(a * Math.PI / 4) * t * 2), dy = Math.round(Math.sin(a * Math.PI / 4) * t * 2); R(cx + dx, cy + dy, 1, 1, col); } }
   }
@@ -290,7 +330,7 @@ const PX = (() => {
   function frame(d) {
     f++; ctx.clearRect(0, 0, W, H); phase = d.phase || 'day';
     if (cer && ++cer.t > 70) cer = null;
-    sky(d.gloom); if (!d.gloom) fireworks();
+    season = d.season || null; sky(d.gloom); if (!d.gloom || season === 'newyear') fireworks(); seasonSky();
     const x = lay.x0;
     R(x, lay.roofY, TW, lay.groundY - lay.roofY, '#d9cdb5'); R(x, lay.roofY, 3, lay.groundY - lay.roofY, '#b8a98d'); R(x + TW - 3, lay.roofY, 3, lay.groundY - lay.roofY, '#b8a98d');
     lay.floors.forEach(fl => drawFloor(fl, d));
@@ -302,11 +342,13 @@ const PX = (() => {
     // FOR HIRE floors flash dark/red
     lay.floors.forEach(fl => { if (fl.bot && d.hire.has(fl.bot) && f % 2) { ctx.globalAlpha = .35; R(lay.rx, fl.y + 1, lay.rw, FH - 3, '#ff1f3d'); ctx.globalAlpha = 1; } });
     drawShaft();
-    const gy = drawRoof(lay.level, d.ghost);
+    risk = d.risk || 0;
+    const gy = drawRoof(lay.level, d.ghost, d);
     // connectors to the floor plates
     if (!lay.compact) lay.floors.forEach(fl => { R(x + TW, fl.y + 8, 7, 1, '#1a1020'); R(x + TW + 6, fl.y + 7, 1, 3, '#1a1020'); });
     ground();
-    if (d.rain) rain();
+    if (d.rain && season !== 'christmas') rain();
+    if (season === 'christmas') snow();
     coins = coins.filter(c => c.life > 0);
     coins.forEach(c => { c.life--; if (c.y < c.floor) { c.y = Math.min(c.floor, c.y + c.vy); } else if (!c.b) { c.b = 1; c.y -= 6; } c.x += c.dx;
       const w2 = (f + c.ph) % 4 === 0 ? 1 : 3; R(c.x + (3 - w2) / 2, c.y, w2, 3, '#ffd23f'); if (w2 === 3) R(c.x + 1, c.y, 1, 1, '#fff6bf'); R(c.x + (3 - w2) / 2, c.y + 3, w2, 1, '#c99a00'); });
@@ -332,6 +374,7 @@ const PX = (() => {
   function ceremony(bot) { cer = {bot, t: 0}; }
   function coinShower(n) { const r = rng(f + 1); for (let i = 0; i < n; i++) coins.push({x: lay.x0 + Math.floor(r() * TW), y: -Math.floor(r() * 60), vy: 2 + Math.floor(r() * 2), dx: 0,
     floor: lay.groundY - 3, life: 60 + Math.floor(r() * 20), ph: i, b: 0}); }
+  function walk(bot, out) { moves[bot] = {t: 0, out}; }
   function slump(bots, ticks) { bots.forEach(b => { slumpUntil[b] = f + ticks; }); }
-  return {init, frame, icon, avatar, ceremony, coinShower, slump, layout: () => lay, FH, TW, COL, ROOM, BOT_ORDER};
+  return {init, frame, icon, avatar, ceremony, coinShower, slump, walk, LED, layout: () => lay, FH, TW, COL, ROOM, BOT_ORDER};
 })();
