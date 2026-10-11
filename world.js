@@ -197,7 +197,7 @@ const PX = (() => {
     R(0, g, W, 2, '#3fae4a'); for (let x = 0; x < W; x += 5) R(x + (x % 3), g - 1, 1, 1, '#3fae4a');
     R(0, g + 2, W, 4, '#c9c4b8'); for (let x = 0; x < W; x += 8) R(x, g + 2, 1, 4, '#a9a498');
     R(0, g + 6, W, 1, '#7d786d'); R(0, g + 7, W, H - g - 7, '#3a3d4a');
-    for (let x = -(f % 12); x < W; x += 12) R(x, g + 11, 6, 1, '#ffd23f');
+    for (let x = 0; x < W; x += 12) R(x, g + 11, 6, 1, "#ffd23f"); // static lane dashes
     traffic(g);
   }
 
