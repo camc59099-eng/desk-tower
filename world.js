@@ -12,6 +12,7 @@ const PX = (() => {
     Skeptic: {name: 'RISK VAULT', wall: '#8b93a6', wall2: '#7c8497'},
     Chief: {name: 'PENTHOUSE OFFICE', wall: '#f3d58a', wall2: '#e8c46c'},
     lobby: {name: 'LOBBY', wall: '#e9dcc4', wall2: '#ddcfb4'},
+    mezz: {name: 'LOBBY MEZZANINE', wall: '#d8cbb0', wall2: '#cbbd9f'},
     leader: {name: 'LEADERBOARD', wall: '#232a50', wall2: '#1d2340'},
     cafe: {name: 'CAFE', wall: '#c98b5a', wall2: '#bb7d4d', unlock: 2},
     gym: {name: 'GYM', wall: '#5fc7b8', wall2: '#50b8a9', unlock: 3},
@@ -39,7 +40,7 @@ const PX = (() => {
   const R = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(x | 0, y | 0, w | 0, h | 0); };
 
   function layout(level, W_, H_) {
-    const floors = [{type: 'lobby', key: 'lobby'}, {type: 'leader', key: 'leader'}];
+    const floors = [{type: 'lobby', key: 'lobby'}, {type: 'mezz', key: 'mezz'}, {type: 'leader', key: 'leader'}];
     ['cafe', 'gym', 'arcade', 'trophy'].forEach(k => { if (level >= ROOM[k].unlock) floors.push({type: 'amenity', key: k}); });
     BOT_ORDER.forEach(b => floors.push({type: 'bot', key: b, bot: b}));
     const groundY = H_ - GROUND;
@@ -59,7 +60,7 @@ const PX = (() => {
     const r = rng(7 + level);
     walkers = [];
     lay.floors.forEach(fl => {
-      const n = fl.type === 'lobby' ? 3 : fl.type === 'amenity' ? 2 : fl.type === 'leader' ? 0 : 1;
+      const n = fl.type === 'lobby' ? 3 : fl.type === 'amenity' ? 2 : fl.type === 'leader' || fl.type === 'mezz' ? 0 : 1;
       for (let j = 0; j < n; j++) {
         const pal = PALS[Math.floor(r() * PALS.length)];
         walkers.push({fl: fl.i, x: lay.rx + 6 + Math.floor(r() * (lay.rw - 16)), dir: r() < .5 ? -1 : 1,
@@ -171,6 +172,13 @@ const PX = (() => {
       if (lay.level >= 3) { R(x + 30, s - 1, w - 52, 1, '#c0392b'); plant(x + 4, s); }
       if (lay.level >= 5) { const cx = x + Math.floor(w / 2); R(cx - 1, y + 1, 2, 2, '#ffd23f'); R(cx - 4, y + 3, 8, 1, '#ffd23f'); R(cx - 4, y + 4, 1, 1, '#fff6a0'); R(cx + 3, y + 4, 1, 1, '#fff6a0'); }
     },
+    mezz(x, y, w, s) { // TV bezel (left) + cork calendar board (right); text is an HTML overlay
+      const half = Math.floor(w / 2);
+      R(x + 2, y + 1, half - 3, s - y - 2, '#1a1020'); R(x + 3, y + 2, half - 5, s - y - 4, '#0b1426');
+      R(x + Math.floor(half / 2) - 3, s - 1, 6, 1, '#444');
+      R(x + half + 1, y + 1, w - half - 3, s - y - 2, '#7a4b2a'); R(x + half + 2, y + 2, w - half - 5, s - y - 4, '#c9a26b');
+      for (let i = 0; i < 4; i++) R(x + half + 6 + i * 14, y + 2, 2, 1, ['#ff4d5e', '#5ab0ff', '#4cff8f', '#ffd23f'][i]);
+    },
     leader(x, y, w, s) {
       R(x + 3, y + 1, w - 6, h0(y, s) - 1, '#0a0d1e'); R(x + 3, y + 1, w - 6, 1, '#ffd23f'); R(x + 3, s - 2, w - 6, 1, '#ffd23f');
       for (let i = 0; i < w - 6; i += 4) if ((i + f) % 8 < 4) R(x + 3 + i, y + 1, 2, 1, '#fff6a0');
@@ -235,6 +243,18 @@ const PX = (() => {
       plant(x + 108, s); R(x + 40, s - 9, 3, 2, '#ffd23f'); R(x + 41, s - 7, 1, 2, '#c99a00');
     },
   };
+  // desk cat: wanders on the best bot's floor, then naps on its desk
+  function drawCat(bot) {
+    const fl = lay.floors.find(q => q.bot === bot); if (!fl) return;
+    const x = lay.rx, s = fl.y + FH - 2, t = f % 220, k = '#2a2230', o = '#ff9a3d';
+    if (t < 140) { const span = 60, p = t % (2 * span), cx = x + 8 + (p < span ? p : 2 * span - p), dir = p < span ? 1 : -1, leg = (t >> 1) % 2;
+      R(cx, s - 4, 6, 3, o); R(dir > 0 ? cx + 5 : cx - 2, s - 6, 3, 3, o); R(dir > 0 ? cx + 5 : cx - 2, s - 7, 1, 1, o); R(dir > 0 ? cx + 7 : cx, s - 7, 1, 1, o);
+      R(dir > 0 ? cx + 6 : cx - 1, s - 5, 1, 1, k); R(dir > 0 ? cx - 2 : cx + 6, s - 6 + (t % 6 < 3 ? 0 : 1), 2, 1, o);
+      R(cx + leg, s - 1, 1, 1, k); R(cx + 4 - leg, s - 1, 1, 1, k);
+    } else { const dx = x + 49, dy = s - 8; // curled up on the desk
+      R(dx, dy, 7, 3, o); R(dx + 5, dy - 1, 3, 3, o); R(dx + 6, dy, 1, 1, k); R(dx, dy + 2, 3, 1, '#d9752a');
+      const zt = (t - 140) % 24; if (zt < 18) { R(dx + 9 + (zt >> 3), dy - 3 - (zt >> 2), 2, 1, '#fff'); R(dx + 9 + (zt >> 3), dy - 2 - (zt >> 2), 1, 1, '#fff'); } }
+  }
   function h0(y, s) { return s - y - 1; }
   function plant(x, s) { R(x, s - 4, 5, 4, '#a0522d'); R(x + 1, s - 8, 3, 4, '#2e8b57'); R(x, s - 10, 2, 3, '#3fae4a'); R(x + 3, s - 10, 2, 3, '#3fae4a'); }
 
@@ -275,16 +295,22 @@ const PX = (() => {
     R(x, s, w, 2, '#4a3b2f'); R(x, s, w, 1, '#6b5a4a');
   }
 
-  let risk = 0;
+  let risk = 0; const jobs = [];
   function drawShaft() {
     const sx = lay.x0 + 3, top = lay.roofY, bot = lay.groundY;
     R(sx, top, SHAFT, bot - top, '#2a2d3a'); R(sx + 3, top, 1, bot - top, '#555a6e'); R(sx + 8, top, 1, bot - top, '#555a6e');
     lay.floors.forEach(fl => { R(sx, fl.y + FH - 2, SHAFT, 2, '#4a3b2f'); R(sx + 1, fl.y + 3, SHAFT - 2, 1, '#ffd23f'); });
     // elevator: move 2px per tick between floors, pause at stops
     if (elev.wait > 0) elev.wait--; else if (elev.y !== elev.target) elev.y += Math.sign(elev.target - elev.y) * Math.min(2, Math.abs(elev.target - elev.y));
+    else if (elev.job) { const j = elev.job; // delivery: go to the reporter's floor, pick up, ride to the next floor, drop off
+      if (j.stage === 0) { j.stage = 1; elev.target = j.from; elev.wait = 2; }
+      else if (j.stage === 1) { j.stage = 2; elev.carry = true; elev.target = j.to; elev.wait = 8; }
+      else { elev.carry = false; elev.job = null; elev.wait = 10; } }
+    else if (jobs.length) { elev.job = jobs.shift(); elev.job.stage = 0; }
     else { elev.wait = 8; const fl = lay.floors[Math.floor(elev.r() * lay.floors.length)]; elev.target = fl.y + 1; }
     const ey = elev.y; R(sx + 4, top, 1, ey - top, '#999'); R(sx, ey, SHAFT, FH - 3, '#c0392b'); R(sx + 1, ey + 1, SHAFT - 2, FH - 5, '#f5e6c8');
     sprite(WALK, sx + 3, ey + 4, {h: '#222', s: '#f2c28b', k: '#1a1020', c: '#5ab0ff'}); sprite(LEGS[0], sx + 3, ey + 10, {p: '#2d2f4a', k: '#1a1020'});
+    if (elev.carry) { R(sx + 6, ey + 6, 4, 5, '#fff'); R(sx + 7, ey + 7, 2, 1, '#888'); R(sx + 7, ey + 9, 2, 1, '#888'); if (f % 2) R(sx + 9, ey + 5, 1, 1, '#ffd23f'); }
     if (elev.wait > 0) { R(sx + 1, ey + 1, 2, FH - 5, '#d9c9a8'); R(sx + SHAFT - 3, ey + 1, 2, FH - 5, '#d9c9a8'); }
     else { R(sx + 1, ey + 1, 5, FH - 5, '#d9c9a8'); R(sx + 6, ey + 1, 5, FH - 5, '#cdbd9c'); }
     // risk meter: rises with today's loss toward the 2% daily limit (top of the shaft = limit hit)
@@ -315,6 +341,15 @@ const PX = (() => {
     if (season === 'halloween') [x + 22, x + 68, x + 100].forEach(px => { R(px, y - 7, 6, 4, '#ff8a00'); R(px + 2, y - 8, 2, 1, '#2e8b57'); R(px + 1, y - 6, 1, 1, '#1a1020'); R(px + 4, y - 6, 1, 1, '#1a1020'); R(px + 2, y - 5, 2, 1, f % 4 < 2 ? '#ffd23f' : '#1a1020'); });
     if (season === 'christmas') { for (let i = 0; i < w; i += 1) R(x + i, y - 4, 1, 1, '#fff'); R(x + w - 12, y - 14, 1, 11, '#5b3a1a'); for (let j = 0; j < 9; j++) R(x + w - 12 - (j >> 1), y - 13 + j, 1 + j, 1, '#2e8b57'); R(x + w - 12, y - 15, 1, 1, '#ffd23f'); }
     if (season === 'valentine') { const hx = x + 64, hy = y - 12; R(hx, hy, 2, 2, '#ff4fa3'); R(hx + 3, hy, 2, 2, '#ff4fa3'); R(hx - 1, hy + 1, 7, 2, '#ff4fa3'); R(hx, hy + 3, 5, 1, '#ff4fa3'); R(hx + 1, hy + 4, 3, 1, '#ff4fa3'); R(hx + 2, hy + 5, 1, 1, '#ff4fa3'); }
+    if (ghostNext && d.construct) { const gy = y - 3 - FH - (level >= 2 ? 30 : 6), sb = y - 3;
+      for (let i = 0; i <= w; i += 10) R(x + i, gy, 1, sb - gy, '#c98a2b');
+      for (let j = gy; j < sb; j += 6) R(x, j, w, 1, '#c98a2b');
+      for (let i = 0; i < w; i += 20) for (let j = 0; j < 6; j++) R(x + i + j, gy + 6 + j, 1, 1, '#8a5a1a');
+      const cx = x + w + 6; R(cx, gy - 16, 2, sb - gy + 16, '#ffd23f'); for (let j = gy - 16; j < sb; j += 4) R(cx - 1, j, 4, 1, '#c99a00');
+      R(cx - 46, gy - 16, 60, 2, '#ffd23f'); R(cx + 8, gy - 14, 6, 4, '#555');
+      const hx = cx - 40 + ((f >> 1) % 30); R(hx, gy - 14, 1, 10 + (f % 4), '#888'); R(hx - 2, gy - 4 + (f % 4), 5, 3, '#c0392b');
+      R(cx - 2, gy - 20, 6, 4, '#3a3d4a'); R(cx - 1, gy - 19, 4, 2, '#9fd6ff');
+      if (f % 4 < 2) R(cx, gy - 22, 2, 1, '#ff3b3b'); }
     if (ghostNext) { const gy = y - 3 - FH - (level >= 2 ? 30 : 6); for (let i = 0; i < w; i += 4) { R(x + i, gy, 2, 1, '#ffffff'); R(x + i, gy + FH, 2, 1, '#ffffff'); }
       for (let j = 0; j < FH; j += 4) { R(x, gy + j, 1, 2, '#fff'); R(x + w - 1, gy + j, 1, 2, '#fff'); } return gy; }
     return null;
@@ -339,6 +374,7 @@ const PX = (() => {
       if (w.pause > 0) w.pause--; else { w.x += w.dir; if (w.x < lay.rx + 3 || w.x > lay.rx + lay.rw - 8) { w.dir *= -1; w.x += 2 * w.dir; } if (((f * 13 + w.seed * 97) | 0) % 40 === 0) w.pause = 6; }
       drawWalker(w, w.x, s - 8, f + w.fl);
     });
+    if (d.cat) drawCat(d.cat);
     // FOR HIRE floors flash dark/red
     lay.floors.forEach(fl => { if (fl.bot && d.hire.has(fl.bot) && f % 2) { ctx.globalAlpha = .35; R(lay.rx, fl.y + 1, lay.rw, FH - 3, '#ff1f3d'); ctx.globalAlpha = 1; } });
     drawShaft();
@@ -374,7 +410,11 @@ const PX = (() => {
   function ceremony(bot) { cer = {bot, t: 0}; }
   function coinShower(n) { const r = rng(f + 1); for (let i = 0; i < n; i++) coins.push({x: lay.x0 + Math.floor(r() * TW), y: -Math.floor(r() * 60), vy: 2 + Math.floor(r() * 2), dx: 0,
     floor: lay.groundY - 3, life: 60 + Math.floor(r() * 20), ph: i, b: 0}); }
+  function deliver(fromBot, toBot) {
+    const a = lay.floors.find(fl => fl.bot === fromBot), b = lay.floors.find(fl => fl.bot === toBot);
+    if (a && b && jobs.length < 6) jobs.push({from: a.y + 1, to: b.y + 1, fromBot, toBot});
+  }
   function walk(bot, out) { moves[bot] = {t: 0, out}; }
   function slump(bots, ticks) { bots.forEach(b => { slumpUntil[b] = f + ticks; }); }
-  return {init, frame, icon, avatar, ceremony, coinShower, slump, walk, LED, layout: () => lay, FH, TW, COL, ROOM, BOT_ORDER};
+  return {init, frame, icon, avatar, ceremony, coinShower, slump, walk, deliver, LED, layout: () => lay, FH, TW, COL, ROOM, BOT_ORDER};
 })();

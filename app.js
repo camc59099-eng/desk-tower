@@ -1,10 +1,11 @@
 // Desk HQ UI (pixel Tiny-Tower style). Read-only: polls JSON and draws. No forms, no POSTs, no trading, no sign-ins.
 'use strict';
-const POLL_MS = 4000, TICK_MS = 160, WORLD_H = 290;
+const POLL_MS = 4000, TICK_MS = 160, WORLD_H = 308;
 const Q = new URLSearchParams(location.search);
 const mode = 'real'; // single real view (demo modes removed)
 let data = null, lastTier = null, preview = +Q.get('preview') || null, skyOverride = Q.get('sky');
 let chatFilter = 'All', lastChatKey = '', worldKey = '', ghostY = null, worldState = null, scale = 3;
+let prevLeads = null, chatQ = [];
 let prevAway = null, apPage = 0;
 let speechSpots = [], speechI = 0, visitors = null;
 let replayAsof = null, liveDays = [], prevSnap = null, lastRoster = null, sound = false, actx = null, openBot = null;
@@ -53,11 +54,36 @@ function events(d) {
     if (snap.tier > prevSnap.tier && !preview) sfx('level');
   }
   prevSnap = snap;
+  leadAdvance(d);
   // hire ceremony: a roster version went up
   const base = lastRoster || JSON.parse(localStorage.getItem('hq_roster_real') || 'null') || {};
   (d.roster || []).forEach(r => { const was = base[r.name] || 1; if (r.version > was) { PX.ceremony(r.name); toast(`NEW HIRE: ${r.name.toUpperCase()} v${r.version} moves in!`); sfx('level'); } });
   lastRoster = Object.fromEntries((d.roster || []).map(r => [r.name, r.version]));
   if (!d.asof) localStorage.setItem('hq_roster_real', JSON.stringify(lastRoster));
+}
+// ---------------- lead advances -> elevator carries the report up the pipeline + decorative chatter between neighbours
+const PIPE = ['Scout', 'News', 'Sentiment', 'Charts', 'Skeptic', 'Chief'];
+function leadSteps(d) { const m = {}; (d.leads || []).forEach(l => { m[l.lead_id] = new Set([...Object.keys(l.reports || {}), ...(l.verdict ? ['Skeptic'] : [])]); }); return m; }
+function leadAdvance(d, force) {
+  const now = leadSteps(d);
+  if (d.asof) { prevLeads = null; return; }
+  const adv = [];
+  if (prevLeads) Object.entries(now).forEach(([lid, set]) => set.forEach(b => { if (!(prevLeads[lid] && prevLeads[lid].has(b))) adv.push([lid, b]); }));
+  if (force) adv.push(force);
+  prevLeads = now;
+  adv.slice(0, 3).forEach(([lid, b]) => { const nb = PIPE[PIPE.indexOf(b) + 1] || 'Chief'; if (nb !== b) PX.deliver(b, nb); chatter(lid, b, nb); });
+}
+const CHAT_A = ['#{L} done, sending it up to {N}!', 'Report on #{L} is in the lift.', '{N}, your turn on #{L}.', 'Filed #{L}. Coffee time.'];
+const CHAT_B = ['Got it, reading #{L} now.', 'Thanks {A}, on it.', 'Lift is here with #{L}!', 'Checking the numbers on #{L}.'];
+function chatter(lid, a, b) {
+  const pick = arr => arr[Math.floor(Math.random() * arr.length)].replace(/\{L\}/g, lid).replace(/\{N\}/g, b).replace(/\{A\}/g, a);
+  chatQ.push({bot: a, text: pick(CHAT_A)}, {bot: b, text: pick(CHAT_B)});
+  if (!chatter.t) chatter.t = setInterval(() => { const c = chatQ.shift(); if (!c) { clearInterval(chatter.t); chatter.t = null; const e = $('chatter'); if (e) e.hidden = true; return; } showChatter(c); }, 2600);
+}
+function showChatter(c) {
+  const el = $('chatter'), lay = PX.layout(); if (!el || !lay) return; const fl = lay.floors.find(q => q.bot === c.bot); if (!fl) return;
+  const S = scale; el.style.left = (lay.rx + 4) * S + 'px'; el.style.top = (fl.y + 1) * S + 'px'; el.style.setProperty('--c', PX.COL[c.bot]);
+  el.innerHTML = `<b>${esc(c.bot.toUpperCase())}</b> ${esc(c.text)}`; el.hidden = false;
 }
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => { t.hidden = true; }, 4000); }
 
@@ -129,7 +155,7 @@ function render() {
   worldState = {bots: Object.fromEntries(d.bots.map(b => [b.name, b])), gloom: !preview && (p.total < 0 || p.today < 0 || hire.size > 0),
     rain: !preview && p.total < 0, hire, ghost: !!d.tiers.find(t => t.level === lvl + 1), phase: mp.phase,
     streak: preview ? {} : (d.streak || {}), spot: new Set(d.lead_of_day ? d.lead_of_day.floors : []), risk: Math.min(100, (d.autopilot || {}).loss_used_pct || 0),
-    season: currentSeason(), ...nightShift()};
+    season: currentSeason(), ...nightShift(), construct: constructing(d, lvl), cat: catBot(d)};
   shiftMoves(worldState.away);
   world(d, lvl);
   if (lastTier != null && realTier > lastTier && !preview && !d.asof) celebrate(d.tier.name);
@@ -137,10 +163,17 @@ function render() {
   if (openBot) openModal(openBot, true);
 }
 
+function constructing(d, lvl) {
+  if (Q.get('build') === '1') return true;
+  if (preview || !d.next_tier || lvl !== d.tier.level) return false;
+  const prev = d.tier.min_pnl || 0, span = d.next_tier.min_pnl - prev;
+  return span > 0 && (d.pnl.total - prev) / span >= 0.75; // within 25% of the next floor
+}
+function catBot(d) { const lb = d.leaderboard || []; const top = lb.find(r => r.trades > 0); return top ? top.name : 'Chief'; }
 function world(d, lvl) {
   const sky = $('sky'); scale = sky.clientWidth >= 600 ? 3 : 2;
   const ap = d.autopilot || {};
-  const key = [lvl, sky.clientWidth, scale, mode, d.asof, [...worldState.hire].join(), JSON.stringify(ap), d.bots.map(b => b.mood + b.status + b.version + b.face + b.last_text).join(), JSON.stringify(d.ticker), JSON.stringify(d.lead_of_day), [...worldState.away].join(), worldState.season, JSON.stringify(d.leaderboard), JSON.stringify(d.closed_trades.map(t => t.lead_id + t.pnl)), d.open_trades.length].join('|');
+  const key = [lvl, sky.clientWidth, scale, mode, d.asof, [...worldState.hire].join(), JSON.stringify(ap), d.bots.map(b => b.mood + b.status + b.version + b.face + b.last_text).join(), JSON.stringify(d.ticker), JSON.stringify(d.lead_of_day), [...worldState.away].join(), worldState.season, worldState.construct, worldState.cat, JSON.stringify(d.prices), JSON.stringify(d.calendar && d.calendar.events), JSON.stringify(d.leaderboard), JSON.stringify(d.closed_trades.map(t => t.lead_id + t.pnl)), d.open_trades.length].join('|');
   if (key === worldKey) return; worldKey = key;
   const lay = PX.init($('world'), lvl, scale, {H: WORLD_H});
   ghostY = PX.frame(worldState);
@@ -164,6 +197,11 @@ function world(d, lvl) {
 </div>`;
       h += `<div id="visitors" class="visitors${cmp}" title="${PUBLIC ? 'Page-load count from a no-account, no-cookie public counter (abacus.jasoncameron.dev). No individual tracking.' : 'The visitor counter only runs on the public GitHub Pages copy.'}" style="left:${(lay.rx + 1) * S}px;top:${(fl.y + 1) * S}px;width:${(lay.compact ? 28 : 36) * S}px">${visitorText()}</div>`;
       if (!lay.compact) h += `<div class="tag amen" style="--c:#c8d0f0;left:${left}px;top:${top}px;width:${width}px;height:${height}px"><b>LOBBY</b><span>Ground floor · lift to every floor</span><em>Autopilot board is display-only</em></div>`;
+    } else if (fl.key === 'mezz') {
+      const half = Math.floor(lay.rw / 2);
+      h += `<div class="tv${cmp}" id="tvBox" title="Lobby TV · read-only prices · tap for details" style="left:${(lay.rx + 3) * S}px;top:${(fl.y + 3) * S}px;width:${(half - 5) * S}px;height:${(FH - 6) * S}px">${tvHTML(d)}</div>`;
+      h += `<div class="calb${cmp}" id="calBox" title="Economic calendar · tap for details" style="left:${(lay.rx + half + 2) * S}px;top:${(fl.y + 3) * S}px;width:${(lay.rw - half - 5) * S}px;height:${(FH - 6) * S}px">${calHTML(d, lay.compact ? 2 : 3)}</div>`;
+      if (!lay.compact) h += `<div class="tag amen" style="--c:#c8d0f0;left:${left}px;top:${top}px;width:${width}px;height:${height}px"><b>LOBBY MEZZANINE</b><span>TV: MNQ + gold micro</span><em>Econ calendar board</em></div>`;
     } else if (fl.key === 'leader') {
       const lb = d.leaderboard || [];
       h += `<div class="lboard${cmp}" title="Ranked by net paper P&L of closed trades on leads each bot worked on" style="left:${(lay.rx + 4) * S}px;top:${(fl.y + 2) * S}px;width:${(lay.rw - 8) * S}px;height:${(FH - 6) * S}px">${lb.map((r, i) =>
@@ -184,7 +222,7 @@ function world(d, lvl) {
   h += `<div class="riskhot" title="RISK METER: today's loss is ${rk}% of the 2% daily limit (top of the lift shaft = limit hit)" style="left:${(lay.x0 + 3) * S}px;top:${lay.roofY * S}px;width:${3 * S}px;height:${(lay.groundY - lay.roofY) * S}px"></div>`;
   if (d.lead_of_day) { const L = d.lead_of_day, sp = lay.floors.filter(fl => fl.bot && worldState.spot.has(fl.bot) && !worldState.away.has(fl.bot));
     sp.forEach(fl => { h += `<div class="spotTag${lay.compact ? ' compact' : ''}" title="Lead of the day: #${esc(L.lead_id)} ${esc(L.ticker)} (${L.score}/6 steps)" style="left:${(lay.rx + 62) * S}px;top:${(fl.y + 1) * S}px">★ #${esc(L.lead_id)}</div>`; }); }
-  h += `<div class="bubble" id="bubble"></div><div class="speech" id="speech" hidden></div><div class="tltip" id="tltip" hidden></div>`;
+  h += `<div class="bubble" id="bubble"></div><div class="speech" id="speech" hidden></div><div class="tltip" id="tltip" hidden></div><div class="chatter" id="chatter" title="Decorative bot chatter (canned, not real messages)" hidden></div>`;
   $('overlay').innerHTML = h;
   $('sky').style.height = WORLD_H * S + 'px';
   $('overlay').querySelectorAll('[data-bot]').forEach(el => {
@@ -201,6 +239,8 @@ function world(d, lvl) {
     const x = parseInt(el.style.left); tip.style.left = Math.max(4, Math.min($('sky').clientWidth - 214, x - 100)) + 'px'; tip.style.bottom = (parseInt(el.dataset.b) + 18) + 'px'; tip.hidden = false; });
   speechI = speechI % Math.max(1, speechSpots.length); speak();
   if ($('apboard')) { apRender($('apboard')); $('apboard').onclick = openRules; }
+  if ($('tvBox')) { $('tvBox').onclick = openTV; drawTV(d); }
+  if ($('calBox')) $('calBox').onclick = openCal;
 }
 
 // ---------------- trade timeline along the street
@@ -358,6 +398,37 @@ $('share').onclick = async () => { const c = await shareCard(); if (!c) return; 
     <img class="sharePrev px" src="${url}" alt="Share card preview"><div class="shareBtns"><a class="btnpx" href="${url}" download="${name}">⬇ DOWNLOAD PNG</a></div>`;
   $('modal').hidden = false; };
 
+// ---------------- lobby TV (read-only prices fetched by build_data.py)
+function tvHTML(d) {
+  const p = d.prices;
+  if (!p) return '<div class="tvmsg">NO SIGNAL (replay)</div>';
+  if (!p.ok) return `<div class="tvmsg">PRICES UNAVAILABLE</div><small>${esc(p.message || '')}</small>`;
+  return p.items.map((it, i) => `<div class="tvrow"><b>${esc(it.symbol)}</b><canvas class="px" data-tv="${i}"></canvas><span>${it.last.toLocaleString('en-US', {maximumFractionDigits: it.last >= 1000 ? 0 : 2})}</span><em class="${cls(it.change_pct)}">${it.change_pct == null ? '' : (it.change_pct > 0 ? '+' : '') + it.change_pct.toFixed(2) + '%'}</em></div>`).join('');
+}
+function drawTV(d) {
+  if (!d.prices || !d.prices.ok) return;
+  document.querySelectorAll('canvas[data-tv]').forEach(c => { const it = d.prices.items[+c.dataset.tv], pts = it.points || []; c.width = 40; c.height = 10;
+    const x = c.getContext('2d'); if (pts.length < 2) return; const mn = Math.min(...pts), mx = Math.max(...pts), rg = (mx - mn) || 1;
+    x.fillStyle = (it.change_pct || 0) >= 0 ? '#4cff8f' : '#ff4d5e';
+    pts.forEach((v, i) => { const px = Math.round(i * 39 / (pts.length - 1)), py = Math.round(9 - (v - mn) / rg * 9); x.fillRect(px, py, 1, 1); }); });
+}
+function calHTML(d, n) {
+  const c = d.calendar;
+  if (!c) return '<div class="calmsg">CALENDAR: N/A IN REPLAY</div>';
+  if (!c.events.length) return '<div class="calmsg">CALENDAR UNAVAILABLE</div>';
+  return c.events.slice(0, n).map(e => `<div class="calrow"><b>${esc(fmtShort(e.date))}</b> ${esc(e.name)}</div>`).join('') + (c.sources.some(s => !s.ok) ? '<i title="Some sources unavailable">!</i>' : '');
+}
+const fmtShort = ds => { const d = new Date(ds + 'T12:00:00Z'); return isNaN(d) ? ds : d.toLocaleDateString('en-US', {timeZone: 'UTC', month: 'short', day: 'numeric'}).toUpperCase(); };
+function openTV() { const p = data && data.prices; if (!p) return; openBot = null;
+  $('modalBody').innerHTML = `<div class="eyebrow">LOBBY TV · READ-ONLY PRICES</div>${p.ok ? `<table><tr><th>SYMBOL</th><th>LAST</th><th>CHG</th><th>AS OF (ET)</th></tr>${p.items.map(it => `<tr><td><b>${esc(it.symbol)}</b> <small>${esc(it.name)}</small></td><td>${it.last}</td><td class="${cls(it.change_pct)}">${it.change_pct == null ? '–' : it.change_pct.toFixed(2) + '%'}</td><td>${esc(new Date(it.market_time).toLocaleString('en-US', {timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit'}))}</td></tr>`).join('')}</table>
+    <p class="srcNote">Source: ${esc(p.source)}. Fetched by build_data.py ${esc(fmtTime(p.fetched_at))}${p.stale_fetch ? ' · latest refresh failed, showing last good fetch' : ''}. Change is vs the previous settlement. Display only, no trading.</p>` : `<div class="empty">${esc(p.message)}</div><p class="srcNote">Source: ${esc(p.source)}</p>`}`;
+  $('modal').hidden = false; }
+function openCal() { const c = data && data.calendar; if (!c) return; openBot = null;
+  $('modalBody').innerHTML = `<div class="eyebrow">ECONOMIC CALENDAR</div>${c.events.length ? `<table><tr><th>DATE (US)</th><th>EVENT</th><th>SOURCE</th></tr>${c.events.map(e => `<tr><td>${esc(fmtShort(e.date))}</td><td>${esc(e.name)} <small>${esc(e.detail || '')}</small></td><td>${esc(e.source)}</td></tr>`).join('')}</table>` : '<div class="empty">No upcoming events available.</div>'}
+    ${c.sources.map(s => `<div class="srcNote">${s.ok ? '✓' : '✗'} ${esc(s.name)}: ${esc(s.source)} · ${s.ok ? 'fetched ' + esc(fmtTime(s.fetched_at)) : '<b class="neg">unavailable</b> (' + esc(s.error || 'no data') + ')'}</div>`).join('')}
+    <p class="fine">Dates fetched at build time from official sources; nothing is guessed. FOMC date = decision day.</p>`;
+  $('modal').hidden = false; }
+
 // ---------------- rule board (parsed limits only)
 function openRules() {
   const r = data && data.rules; if (!r) return; openBot = null;
@@ -508,6 +579,7 @@ function openModal(name, refresh) {
         <dt>HIRED</dt><dd>${b.hired ? esc(fmtDate(b.hired)) + ` <small>(${esc(b.hired_src)})</small>` : '–'}</dd>
         <dt>BEST CALL</dt><dd>${b.best_call ? `#${esc(b.best_call.lead_id)} ${esc(b.best_call.ticker)} <span class="pos">${money(b.best_call.pnl, true)}</span>` : '<small>no winning trade yet</small>'}</dd>
         <dt>MOOD</dt><dd>${esc((b.face || 'neutral').toUpperCase())}${b.recent && b.recent.trades ? ` <small>(${b.recent.winrate}% of last ${b.recent.trades})</small>` : ''}</dd></dl></div>
+      <div class="wkspark"><span>WEEKLY WIN%</span>${b.weekly && b.weekly.some(w => w.n) ? `<img class="px" src="${weekSpark(b.weekly)}" alt="weekly win rate" title="${esc(b.weekly.map(w => w.week + ': ' + (w.n ? w.winrate + '% of ' + w.n : 'no trades')).join(' · '))}">` : '<small>no closed trades in the last 8 weeks</small>'}</div>
       <div class="idbar"></div></div>
     <div class="srcNote">${esc(b.job)}</div>
     ${prop ? `<div class="flag">⚠ Fire/rehire proposal open: ${esc(prop.why)} Cam decides in chat with Chief.</div>` : ''}
@@ -522,6 +594,12 @@ function openModal(name, refresh) {
     ${b.reports.length > 1 ? `<div class="eyebrow msec">EARLIER</div>${b.reports.slice(1, 5).map(r => `<div class="srcNote">${fmtTime(r.ts)} ${r.lead_id ? '#' + esc(r.lead_id) : ''} · ${esc(r.text.slice(0, 140))}</div>`).join('')}` : ''}
     <p class="fine">Read-only view built from feed.jsonl and paper-ledger.csv. Nothing here changes the bot.</p>`;
   $('modal').hidden = false; if (!refresh) $('modalClose').focus();
+}
+function weekSpark(wk) {
+  const c = document.createElement('canvas'); c.width = wk.length * 4; c.height = 12; const x = c.getContext('2d');
+  wk.forEach((w, i) => { x.fillStyle = '#d9cfb8'; x.fillRect(i * 4, 0, 3, 12);
+    if (w.n) { const hgt = Math.max(1, Math.round(w.winrate / 100 * 12)); x.fillStyle = w.winrate >= 60 ? '#1d9a4f' : w.winrate >= 40 ? '#c99a00' : '#c0392b'; x.fillRect(i * 4, 12 - hgt, 3, hgt); } });
+  return c.toDataURL();
 }
 function closeModal() { openBot = null; $('modal').hidden = true; }
 $('modalClose').onclick = closeModal;
@@ -568,4 +646,5 @@ function celebrate(name) {
 (function logo() { const c = $('logo'); PX.icon(c, 5); c.style.width = '32px'; c.style.height = '48px'; })();
 let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { worldKey = ''; data && render(); }, 150); });
 start(); setInterval(poll, POLL_MS);
-if (Q.get('open')) { const want = Q.get('open'); const t = setInterval(() => { if (data) { clearInterval(t); want === 'rules' ? openRules() : want === 'share' ? $('share').click() : openModal(want); } }, 200); }
+if (Q.get('chatter') === '1') { const t = setInterval(() => { if (data && PX.layout()) { clearInterval(t); const l = (data.leads || [])[0]; leadAdvance(data, [l ? l.lead_id : 'L000', 'Scout']); } }, 200); }
+if (Q.get('open')) { const want = Q.get('open'); const t = setInterval(() => { if (data) { clearInterval(t); want === 'rules' ? openRules() : want === 'tv' ? openTV() : want === 'cal' ? openCal() : want === 'share' ? $('share').click() : openModal(want); } }, 200); }
