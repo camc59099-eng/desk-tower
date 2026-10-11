@@ -308,3 +308,9 @@ body.dark .tag,body.dark .apboard,body.dark .visitors{filter:saturate(.8)}
 .chatter::before{content:"~ ";color:#999}
 .wkspark{display:flex;align-items:center;gap:8px;margin:2px 12px 0;font:6px var(--pix);color:#6b5a4a}
 .wkspark img{width:96px;height:36px}.wkspark small{font:14px var(--txt)}
+
+/* ---- Chart Room screens (real prices) */
+.cscr{position:absolute;z-index:3;pointer-events:auto;cursor:pointer;font:11px/1 var(--txt);color:#cfe;white-space:nowrap;overflow:hidden;display:flex;gap:3px;align-items:center;padding:0 2px}
+.cscr b{font:6px/1 var(--pix);color:#fff}.cscr.pos em{color:var(--green)}.cscr.neg em{color:var(--red)}.cscr em{font-style:normal;margin-left:auto}
+.cscr.nodata{flex-direction:column;justify-content:center;align-items:center;gap:3px}.cscr.nodata i{font:6px var(--pix);font-style:normal;color:#ff9a9a}
+.cscr.compact{font-size:9px}.cscr.compact b{font-size:5px}

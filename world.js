@@ -223,12 +223,22 @@ const PX = (() => {
       b(x + 8, y + 2 + (f % 8 < 4 ? 0 : 1), '#ff3b6b'); b(x + 88, y + 3 + (f % 8 < 4 ? 1 : 0), '#2ecc71'); b(x + 100, y + 1, '#5ab0ff');
       plant(x + 112, s); R(x + 80, s - 9, 3, 9, '#333'); R(x + 79, s - 12, 5, 4, f % 4 < 2 ? '#ff7ac0' : '#ffd23f');
     },
-    Charts(x, y, w, s) {
-      const scr = (sx, col, ph) => { R(sx, y + 2, 26, 12, '#111'); R(sx + 1, y + 3, 24, 10, '#06140c');
-        let v = 5; for (let i = 0; i < 24; i += 2) { const nv = 2 + ((i * 5 + ph * 3 + (f >> 1)) % 7); R(sx + 1 + i, y + 3 + Math.min(v, nv), 1, Math.abs(nv - v) + 1, col); R(sx + 1 + i, y + 3 + nv, 2, 1, col); v = nv; } };
-      scr(x + 4, '#4cff8f', 0); scr(x + 84, '#ff4d5e', 3);
-      R(x, s - 1, w, 1, '#1a1020'); R(x + 112, s - 10, 6, 10, '#3a3d4a'); if (f % 2) R(x + 113, s - 9, 4, 1, '#4cff8f');
-    },
+    Charts(x, y, w, s) { // two wall screens with REAL MNQ / micro-gold 15-min closes (from data.prices); NO DATA if missing
+      chartScreens(x).forEach((sc, i) => {
+        R(sc.x, y + 1, sc.w, 13, '#111'); R(sc.x + 1, y + 2, sc.w - 2, 11, '#06140c');
+        const it = prices && prices.ok && prices.items && prices.items[i];
+        const pts = it && it.points && it.points.length >= 2 ? it.points : null;
+        if (!pts) { for (let k = 0; k < sc.w - 2; k += 3) R(sc.x + 1 + k, y + 12, 1, 1, '#1d3a2a'); return; }
+        const cw = sc.w - 2, top = y + 6, rows = 7, n = cw, mn = Math.min(...pts), mx = Math.max(...pts), rg = (mx - mn) || 1;
+        const col = (it.change_pct || 0) >= 0 ? '#4cff8f' : '#ff4d5e', dim = (it.change_pct || 0) >= 0 ? '#14502c' : '#5a1620';
+        let prev = null;
+        for (let c = 0; c < n; c++) { const v = pts[Math.min(pts.length - 1, Math.floor(c * pts.length / n))], r = Math.round((mx - v) / rg * (rows - 1));
+          for (let q = r + 1; q < rows; q++) if ((c + q) % 2 === 0) R(sc.x + 1 + c, top + q, 1, 1, dim);
+          if (prev != null && prev !== r) R(sc.x + 1 + c, top + Math.min(prev, r), 1, Math.abs(prev - r) + 1, col); else R(sc.x + 1 + c, top + r, 1, 1, col);
+          prev = r; }
+        if (f % 4 < 2) R(sc.x + sc.w - 2, top + prev, 1, 1, '#fff');
+      });
+      R(x, s - 1, w, 1, '#1a1020'); R(x + 112, s - 10, 6, 10, '#3a3d4a'); if (f % 2) R(x + 113, s - 9, 4, 1, '#4cff8f');    },
     Skeptic(x, y, w, s) {
       const cx = x + 16, cy = y + 8; R(cx - 7, cy - 6, 14, 13, '#5d6476'); R(cx - 5, cy - 7, 10, 15, '#5d6476'); R(cx - 4, cy - 4, 8, 8, '#aab2c4'); R(cx - 1, cy - 1, 2, 2, '#333');
       const sp = [[0, -3], [3, 0], [0, 3], [-3, 0]][(f >> 1) % 4]; R(cx + sp[0] - 1, cy + sp[1] - 1, 2, 2, '#333');
@@ -255,6 +265,8 @@ const PX = (() => {
       R(dx, dy, 7, 3, o); R(dx + 5, dy - 1, 3, 3, o); R(dx + 6, dy, 1, 1, k); R(dx, dy + 2, 3, 1, '#d9752a');
       const zt = (t - 140) % 24; if (zt < 18) { R(dx + 9 + (zt >> 3), dy - 3 - (zt >> 2), 2, 1, '#fff'); R(dx + 9 + (zt >> 3), dy - 2 - (zt >> 2), 1, 1, '#fff'); } }
   }
+  function chartScreens(x) { return lay.compact ? [{x: x + 2, w: 22}, {x: x + 25, w: 22}] : [{x: x + 3, w: 36}, {x: x + 73, w: 36}]; }
+  let prices = null;
   function h0(y, s) { return s - y - 1; }
   function plant(x, s) { R(x, s - 4, 5, 4, '#a0522d'); R(x + 1, s - 8, 3, 4, '#2e8b57'); R(x, s - 10, 2, 3, '#3fae4a'); R(x + 3, s - 10, 2, 3, '#3fae4a'); }
 
@@ -365,7 +377,7 @@ const PX = (() => {
   function frame(d) {
     f++; ctx.clearRect(0, 0, W, H); phase = d.phase || 'day';
     if (cer && ++cer.t > 70) cer = null;
-    season = d.season || null; sky(d.gloom); if (!d.gloom || season === 'newyear') fireworks(); seasonSky();
+    season = d.season || null; prices = d.prices || null; sky(d.gloom); if (!d.gloom || season === 'newyear') fireworks(); seasonSky();
     const x = lay.x0;
     R(x, lay.roofY, TW, lay.groundY - lay.roofY, '#d9cdb5'); R(x, lay.roofY, 3, lay.groundY - lay.roofY, '#b8a98d'); R(x + TW - 3, lay.roofY, 3, lay.groundY - lay.roofY, '#b8a98d');
     lay.floors.forEach(fl => drawFloor(fl, d));
@@ -416,5 +428,5 @@ const PX = (() => {
   }
   function walk(bot, out) { moves[bot] = {t: 0, out}; }
   function slump(bots, ticks) { bots.forEach(b => { slumpUntil[b] = f + ticks; }); }
-  return {init, frame, icon, avatar, ceremony, coinShower, slump, walk, deliver, LED, layout: () => lay, FH, TW, COL, ROOM, BOT_ORDER};
+  return {chartScreens, init, frame, icon, avatar, ceremony, coinShower, slump, walk, deliver, LED, layout: () => lay, FH, TW, COL, ROOM, BOT_ORDER};
 })();

@@ -155,7 +155,7 @@ function render() {
   worldState = {bots: Object.fromEntries(d.bots.map(b => [b.name, b])), gloom: !preview && (p.total < 0 || p.today < 0 || hire.size > 0),
     rain: !preview && p.total < 0, hire, ghost: !!d.tiers.find(t => t.level === lvl + 1), phase: mp.phase,
     streak: preview ? {} : (d.streak || {}), spot: new Set(d.lead_of_day ? d.lead_of_day.floors : []), risk: Math.min(100, (d.autopilot || {}).loss_used_pct || 0),
-    season: currentSeason(), ...nightShift(), construct: constructing(d, lvl), cat: catBot(d)};
+    season: currentSeason(), ...nightShift(), construct: constructing(d, lvl), cat: catBot(d), prices: d.prices};
   shiftMoves(worldState.away);
   world(d, lvl);
   if (lastTier != null && realTier > lastTier && !preview && !d.asof) celebrate(d.tier.name);
@@ -188,6 +188,12 @@ function world(d, lvl) {
       h += `<div class="tag${cmp} ${warn ? 'warn' : ''}" data-bot="${esc(fl.bot)}" title="Click for ${esc(fl.bot)}'s floor details" style="--c:${PX.COL[fl.bot]};left:${left}px;top:${top}px;width:${width}px;height:${height}px">
         <b>${esc(fl.bot.toUpperCase())}${v}${warn ? ' · FOR HIRE?' : ''}</b><span>${esc(fl.room.name)} · ${esc(b.role)}</span><em>${esc(b.status)}</em></div>`;
       h += `<div class="hot" data-bot="${esc(fl.bot)}" style="left:${lay.rx * S}px;top:${top}px;width:${(lay.compact ? lay.rw - 48 : lay.rw) * S}px;height:${height}px"></div>`;
+      if (fl.bot === 'Charts') PX.chartScreens(lay.rx).forEach((sc, i) => {
+        const it = d.prices && d.prices.ok && d.prices.items ? d.prices.items[i] : null, nm = i ? 'GOLD' : 'MNQ';
+        const pc = it && it.change_pct != null ? (it.change_pct > 0 ? '+' : '') + it.change_pct.toFixed(2) + '%' : '';
+        const px = it ? it.last.toLocaleString('en-US', {maximumFractionDigits: it.last >= 1000 ? 0 : 2}) : '';
+        h += `<div class="cscr${cmp} ${it ? cls(it.change_pct) : 'nodata'}" data-scr="1" title="${it ? `${esc(it.name)} ${it.last} (${pc}) · 15-min closes · ${esc(d.prices.source)} · tap for details` : 'No price data: ' + esc(d.prices ? d.prices.message || '' : 'replay')}" style="left:${(sc.x + 1) * S}px;top:${(fl.y + 3) * S}px;width:${(sc.w - 2) * S}px;height:${(it ? 4 : 11) * S}px">`
+          + (it ? `<b>${nm}</b>${lay.compact ? '' : ` <span>${px}</span>`} <em>${pc}</em>` : `<b>${nm}</b><i>NO DATA</i>`) + `</div>`; });
       if (b.last_text && !worldState.away.has(fl.bot)) speechSpots.push({bot: fl.bot, text: b.last_text, left: (lay.rx + 50) * S, top: (fl.y - 1) * S});
       if (warn) h += `<div class="forhire" style="left:${(lay.rx + 68) * S}px;top:${(fl.y + 3) * S}px">FOR HIRE?</div>`;
     } else if (fl.key === 'lobby') {
@@ -240,6 +246,7 @@ function world(d, lvl) {
   speechI = speechI % Math.max(1, speechSpots.length); speak();
   if ($('apboard')) { apRender($('apboard')); $('apboard').onclick = openRules; }
   if ($('tvBox')) { $('tvBox').onclick = openTV; drawTV(d); }
+  $('overlay').querySelectorAll('[data-scr]').forEach(el => el.onclick = e => { e.stopPropagation(); openTV(); });
   if ($('calBox')) $('calBox').onclick = openCal;
 }
 
