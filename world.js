@@ -35,7 +35,7 @@ const PX = (() => {
   const PALS = [['#3a2a1a', '#e74c3c'], ['#f1c40f', '#3498db'], ['#1d1d1d', '#9b59b6'], ['#a0522d', '#1abc9c'], ['#ecf0f1', '#e67e22'], ['#6b3e26', '#2ecc71'], ['#222', '#f78fb3']];
   const SKINS = ['#f2c28b', '#e0a370', '#c98e5a', '#8d5a3a', '#f5cfa0'];
 
-  let ctx, W, H, lay, f = 0, elev = null, walkers = [], car = 0, cer = null, coins = [], slumpUntil = {}, phase = 'day', moves = {}, season = null;
+  let ctx, W, H, lay, f = 0, elev = null, walkers = [], cars = [], trafR = null, cash = false, cer = null, coins = [], slumpUntil = {}, phase = 'day', moves = {}, season = null;
   const rng = s => () => (s = (s * 1664525 + 0x3C6EF35F) >>> 0) / 2 ** 32;
   const R = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(x | 0, y | 0, w | 0, h | 0); };
 
@@ -143,15 +143,62 @@ const PX = (() => {
       R(hx, hy, 1, 1, '#ff7ac0'); R(hx + 2, hy, 1, 1, '#ff7ac0'); R(hx, hy + 1, 3, 1, '#ff7ac0'); R(hx + 1, hy + 2, 1, 1, '#ff7ac0'); }
   }
   function rain() { const r = rng(11); for (let i = 0; i < 90; i++) { const x = Math.floor(r() * W), y = (Math.floor(r() * H) + f * 5) % lay.groundY; R(x, y, 1, 3, '#cfe3ff'); } }
+  // ---------------- street traffic: varied pixel vehicles, two lanes, both directions
+  const VEH = { // facing right; b=body s=stripe w=window k=tyre l=headlight t=taillight d=trim y=accent h=helmet r/u=siren
+    sedan: ['....bbbbbb......', '...bwwbwwwb.....', '..bbbbbbbbbbbbb.', 'bbbbbbbbbbbbbbbl', 'tbbbbbbbbbbbbbbb', 'dddddddddddddddd', '..kk.......kk...'],
+    taxi: ['......yy........', '....bbbbbb......', '...bwwbwwwb.....', '..bbbbbbbbbbbbb.', 'bdbdbdbdbdbdbdbl', 'tbbbbbbbbbbbbbbb', 'dddddddddddddddd', '..kk.......kk...'],
+    sports: ['......bbbbb.......', '....bwwwwwbbb.....', '.bbbbbbbbbbbbbbbbl', 'tbbbbbbbbbbbbbbbbb', 'dddddddddddddddddd', '..kk.........kk...'],
+    pickup: ['..........bbbb....', '..........bwwwb...', 'bbbbbbbbbbbwwwbbb.', 'bbbbbbbbbbbbbbbbbl', 'tbbbbbbbbbbbbbbbbb', 'dddddddddddddddddd', '..kk..........kk..'],
+    van: ['bbbbbbbbbbbbbbbb....', 'bbbbbbbbbbbbbbbbbb..', 'bbbbbbbbbbbbbbbbwwb.', 'ssssssssssssssssbwwb', 'bbbbbbbbbbbbbbbbbbbl', 'tbbbbbbbbbbbbbbbbbbb', 'dddddddddddddddddddd', '..kk............kk..'],
+    bus: ['bbbbbbbbbbbbbbbbbbbbbbbbbbbbb.', 'bwwbwwbwwbwwbwwbwwbwwbwwbwwwbb', 'bwwbwwbwwbwwbwwbwwbwwbwwbwwwbb', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'ssssssssssssssssssssssssssssss',
+      'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbl', 'tbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'dddddddddddddddddddddddddddddd', '...kk..................kk.....'],
+    police: ['......ru........', '....bbbbbb......', '...bwwbwwwb.....', '..ddddddddddddd.', 'bbbbbbbbbbbbbbbl', 'tbbbbbbbbbbbbbbb', 'dddddddddddddddd', '..kk.......kk...'],
+    moto: ['...hh...', '...bb...', '..bbbbd.', 'tbbbbbbl', '.kk..kk.'],
+    ev: ['.....bbbbbb.......', '...bwwwwwwwwb.....', '.bbbbbbbbbbbbbbbb.', 'tbbbbbbbbbbbbbbbbl', 'dddddddddddddddddd', '..kk.........kk...'],
+    cash: ['bbbbbbbbbbbbbbb.......', 'bbbbbbbbbbbbbbbbbbb...', 'bbbbbbybbbbbbbbbbwwb..', 'bbbbbyyybbbbbbbbbwwbb.', 'bbbbbbybbbbbbbbbbbbbbl', 'tbbbbbbbbbbbbbbbbbbbbb', 'dddddddddddddddddddddd', '..kk...kk.........kk..'],
+  };
+  const VCOL = ['#e74c3c', '#3b82f6', '#22c55e', '#f59e0b', '#a855f7', '#ec4899', '#14b8a6', '#f1f5f9', '#334155', '#b45309', '#84cc16', '#0ea5e9'];
+  const FIXED = {taxi: '#ffd23f', police: '#f1f5f9', bus: '#f59e0b', cash: '#5f6b5a', van: '#f1f5f9'};
+  const SPEED = {sedan: [2, 3], taxi: [2, 3], sports: [3, 4], pickup: [2, 2], van: [1, 2], bus: [1, 1], police: [3, 3], moto: [3, 4], ev: [2, 3], cash: [1, 1]};
+  function vehDraw(v, x, bottom) {
+    const rows = VEH[v.type], hgt = rows.length, top = bottom - hgt + 1, night = phase === 'night' || phase === 'dusk';
+    const map = {b: v.col, s: v.stripe, w: night ? '#3a4a6a' : '#bfe8ff', k: '#111', l: night ? '#fff6a0' : '#ffe9a8', t: '#c0392b', d: '#2a2d3a', y: v.type === 'cash' ? '#ffd23f' : '#1a1020', h: v.helmet,
+      r: f % 2 ? '#ff3b3b' : '#5a1010', u: f % 2 ? '#1e3a8a' : '#3b82f6'};
+    rows.forEach((row, j) => { for (let i = 0; i < row.length; i++) { const ch = row[v.dir > 0 ? i : row.length - 1 - i], c = map[ch]; if (c && ch !== '.') R(x + i, top + j, 1, 1, c); } });
+    const wy = bottom; rows[hgt - 1].split('').forEach((ch, i) => { if (ch === 'k' && (i + (f >> 0) + (v.dir > 0 ? 0 : 1)) % 2 === 0) R(x + (v.dir > 0 ? i : rows[0].length - 1 - i), wy, 1, 1, '#555'); }); // stepped wheel spin
+    if (night) { const li = rows.findIndex(r => r.includes('l')); if (li >= 0) { ctx.globalAlpha = .35; const lx = v.dir > 0 ? x + rows[0].length : x - 7;
+      R(lx, top + li - 1, 7, 3, '#fff6a0'); R(v.dir > 0 ? lx + 7 : lx - 3, top + li - 2, 3, 5, '#fff6a0'); ctx.globalAlpha = 1; } }
+  }
+  function traffic(g, warm) {
+    if (!trafR) { trafR = rng(4242); for (let k = 0; k < 160; k++) traffic(g, true); } // pre-fill the road
+    const r = trafR, lanes = [{dir: -1, bottom: g + 10}, {dir: 1, bottom: H - 1}];
+    const rate = phase === 'night' ? .025 : phase === 'dusk' || phase === 'dawn' ? .05 : .09;
+    lanes.forEach((ln, li) => {
+      const mine = cars.filter(c => c.lane === li);
+      if (r() < rate) { // spawn at the entry edge if there's room
+        const pool = ['sedan', 'sedan', 'taxi', 'sports', 'pickup', 'van', 'bus', 'police', 'moto', 'moto', 'ev', 'ev'].concat(cash && r() < .25 ? ['cash'] : []);
+        const type = pool[Math.floor(r() * pool.length)], wv = VEH[type][0].length, sp = SPEED[type];
+        const x = ln.dir > 0 ? -wv : W, clear = mine.every(c => ln.dir > 0 ? c.x > wv + 6 : c.x + c.w < W - 6);
+        if (clear) cars.push({lane: li, dir: ln.dir, type, w: wv, x, speed: sp[0] + Math.floor(r() * (sp[1] - sp[0] + 1)),
+          col: FIXED[type] || VCOL[Math.floor(r() * VCOL.length)], stripe: type === 'police' ? '#1e3a8a' : type === 'bus' ? '#1a1020' : VCOL[Math.floor(r() * VCOL.length)], helmet: VCOL[Math.floor(r() * VCOL.length)]});
+      }
+      mine.sort((a, b) => ln.dir > 0 ? b.x - a.x : a.x - b.x); // front-most first
+      mine.forEach((c, i) => { let nx = c.x + c.dir * c.speed; const ahead = mine[i - 1];
+        if (ahead) nx = ln.dir > 0 ? Math.min(nx, ahead.x - c.w - 4) : Math.max(nx, ahead.x + ahead.w + 4); // keep a gap, never overlap
+        c.x = nx; });
+    });
+    cars = cars.filter(c => c.x > -c.w - 2 && c.x < W + 2);
+    if (warm) return;
+    cars.filter(c => c.lane === 0).forEach(c => vehDraw(c, c.x, lanes[0].bottom));
+    cars.filter(c => c.lane === 1).forEach(c => vehDraw(c, c.x, lanes[1].bottom));
+  }
   function ground() {
     const g = lay.groundY;
     R(0, g, W, 2, '#3fae4a'); for (let x = 0; x < W; x += 5) R(x + (x % 3), g - 1, 1, 1, '#3fae4a');
     R(0, g + 2, W, 4, '#c9c4b8'); for (let x = 0; x < W; x += 8) R(x, g + 2, 1, 4, '#a9a498');
     R(0, g + 6, W, 1, '#7d786d'); R(0, g + 7, W, H - g - 7, '#3a3d4a');
     for (let x = -(f % 12); x < W; x += 12) R(x, g + 11, 6, 1, '#ffd23f');
-    car = (car + 2) % (W + 40); const cx = car - 20, cy = g + 8; // little car
-    R(cx, cy + 2, 16, 4, '#e74c3c'); R(cx + 3, cy, 9, 2, '#e74c3c'); R(cx + 4, cy, 3, 2, '#bfe8ff'); R(cx + 8, cy, 3, 2, '#bfe8ff');
-    R(cx + 2, cy + 6, 3, 2, '#111'); R(cx + 11, cy + 6, 3, 2, '#111'); R(cx + 15, cy + 3, 1, 1, '#fff6a0');
+    traffic(g);
   }
 
   // ---------------- rooms
@@ -377,7 +424,7 @@ const PX = (() => {
   function frame(d) {
     f++; ctx.clearRect(0, 0, W, H); phase = d.phase || 'day';
     if (cer && ++cer.t > 70) cer = null;
-    season = d.season || null; prices = d.prices || null; sky(d.gloom); if (!d.gloom || season === 'newyear') fireworks(); seasonSky();
+    season = d.season || null; prices = d.prices || null; cash = !!d.cash; sky(d.gloom); if (!d.gloom || season === 'newyear') fireworks(); seasonSky();
     const x = lay.x0;
     R(x, lay.roofY, TW, lay.groundY - lay.roofY, '#d9cdb5'); R(x, lay.roofY, 3, lay.groundY - lay.roofY, '#b8a98d'); R(x + TW - 3, lay.roofY, 3, lay.groundY - lay.roofY, '#b8a98d');
     lay.floors.forEach(fl => drawFloor(fl, d));

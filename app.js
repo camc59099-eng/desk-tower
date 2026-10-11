@@ -155,7 +155,7 @@ function render() {
   worldState = {bots: Object.fromEntries(d.bots.map(b => [b.name, b])), gloom: !preview && (p.total < 0 || p.today < 0 || hire.size > 0),
     rain: !preview && p.total < 0, hire, ghost: !!d.tiers.find(t => t.level === lvl + 1), phase: mp.phase,
     streak: preview ? {} : (d.streak || {}), spot: new Set(d.lead_of_day ? d.lead_of_day.floors : []), risk: Math.min(100, (d.autopilot || {}).loss_used_pct || 0),
-    season: currentSeason(), ...nightShift(), construct: constructing(d, lvl), cat: catBot(d), prices: d.prices};
+    season: currentSeason(), ...nightShift(), construct: constructing(d, lvl), cat: catBot(d), prices: d.prices, cash: !preview && p.total > 0};
   shiftMoves(worldState.away);
   world(d, lvl);
   if (lastTier != null && realTier > lastTier && !preview && !d.asof) celebrate(d.tier.name);
