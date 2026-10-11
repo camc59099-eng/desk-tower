@@ -24,17 +24,9 @@ h1{margin:0;font:16px/1.4 var(--pix);color:var(--gold);text-shadow:3px 3px 0 #7a
 .badges{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
 .badge{font:9px var(--pix);padding:8px 10px}
 .badge.paper{background:#0e3b22;color:var(--green);box-shadow:0 0 0 3px #062012,inset -3px -3px #082a17,inset 3px 3px #1d6b40}
-.modes{display:flex;gap:6px}
-.modes button,.demoBanner button,.previewTag button{font-size:9px;padding:8px 10px;color:var(--muted);background:#232a50;border:0;
   box-shadow:0 0 0 3px var(--edge),inset -3px -3px #151a35,inset 3px 3px #3a4478}
-.modes button:active{transform:translate(2px,2px)}
-.modes button.on{background:#3a4478;color:#fff;box-shadow:0 0 0 3px var(--edge),inset 3px 3px #151a35,inset -3px -3px #5764a8}
-.modes button[data-mode^=demo].on{background:#8a5a00;color:var(--gold);box-shadow:0 0 0 3px var(--edge),inset 3px 3px #4d3200,inset -3px -3px #c48a12}
 .live{font:9px var(--pix);color:var(--green);animation:blink 1s steps(1) infinite}.live.stale{color:var(--red)}
 @keyframes blink{50%{opacity:.35}}
-.demoBanner{background:repeating-linear-gradient(90deg,#ffd23f 0 16px,#111 16px 32px);text-align:center;padding:8px;border-bottom:4px solid var(--edge)}
-.demoBanner span{font:11px/1.8 var(--pix);background:#111;color:var(--gold);padding:4px 10px}
-.demoBanner button{margin-left:8px;color:#111;background:var(--gold)}
 .limitBanner{background:#5a0f1a;color:#ffd0d5;text-align:center;padding:8px;font:10px/1.8 var(--pix);border-bottom:4px solid var(--edge)}
 .grid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(330px,1fr);grid-template-areas:"scene side" "leads side" "chat side";gap:24px;padding:22px 26px;max-width:1500px;margin:0 auto}
 .scene{grid-area:scene}.leadsP{grid-area:leads}.side{grid-area:side;display:flex;flex-direction:column;gap:24px}.chat{grid-area:chat}
@@ -205,9 +197,8 @@ th,td{padding:3px 4px;text-align:left;border-bottom:2px solid #2a3266}th{font:7p
   .top{padding:10px 12px;position:static}
   h1{font-size:12px}.sub{display:none}#logo{width:24px!important;height:36px!important}
   .badges{gap:8px;width:100%;justify-content:space-between}
-  .modes button,.sound{font-size:7px;padding:6px 6px}
+  .sound{font-size:7px;padding:6px 6px}
   .badge{display:none}
-  .demoBanner span{font-size:8px}
   .grid{padding:14px 12px;gap:20px}
   .panel{padding:12px}
   .sceneHead{flex-direction:column;align-items:stretch}

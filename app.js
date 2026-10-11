@@ -2,7 +2,7 @@
 'use strict';
 const POLL_MS = 4000, TICK_MS = 160, WORLD_H = 290;
 const Q = new URLSearchParams(location.search);
-let mode = (location.hash.replace('#', '') || 'real');
+const mode = 'real'; // single real view (demo modes removed)
 let data = null, lastTier = null, preview = +Q.get('preview') || null, skyOverride = Q.get('sky');
 let chatFilter = 'All', lastChatKey = '', worldKey = '', ghostY = null, worldState = null, scale = 3;
 let prevAway = null, apPage = 0;
@@ -20,7 +20,7 @@ const avatarURL = {}; function avatar(name) { if (!avatarURL[name]) { const c = 
 
 // ---------------- data
 const STATIC = !!window.HQ_STATIC; // static export (GitHub Pages): replay days are pre-built files
-function src() { const f = mode === 'demo-growth' ? 'demo_growth.json' : mode === 'demo-loss' ? 'demo_loss.json' : 'data.json';
+function src() { const f = 'data.json';
   if (STATIC && replayAsof) return `history/${mode}/${replayAsof}.json?t=${Date.now()}`;
   return f + '?t=' + Date.now() + (replayAsof ? '&asof=' + replayAsof : ''); }
 async function poll() {
@@ -30,19 +30,13 @@ async function poll() {
     if (!r.ok) throw new Error(r.status);
     const d = await r.json();
     if (want !== mode + '|' + replayAsof) return; // stale response after a mode/replay switch
-    if ((mode === 'real') === !!d.demo) throw new Error('mode mismatch'); // never mix demo and real
+    if (d.demo) throw new Error('unexpected demo data');
     if (d.pnl && d.pnl.as_of) { const t = Date.parse(d.pnl.as_of); d.pnl.stale = isNaN(t) || Date.now() - t > 864e5; } // age checked in the browser
     data = d; if (!d.asof) liveDays = d.days || liveDays;
-    events(d); render(); $('live').className = 'live'; $('live').textContent = replayAsof ? '● REPLAY' : mode === 'real' ? '● LIVE' : '● DEMO';
+    events(d); render(); $('live').className = 'live'; $('live').textContent = replayAsof ? '● REPLAY' : '● LIVE';
   } catch (e) { $('live').className = 'live stale'; $('live').textContent = '● OFFLINE'; $('live').title = e.message; }
 }
-function setMode(m) {
-  if (mode !== m) preview = null; mode = m; location.hash = m === 'real' ? '' : m; lastTier = null; lastChatKey = ''; worldKey = '';
-  replayAsof = null; prevSnap = null; lastRoster = null; liveDays = [];
-  document.querySelectorAll('.modes button').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
-  $('demoBanner').hidden = m === 'real'; data = null; $('chat').innerHTML = ''; closeModal(); poll();
-}
-document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
+function start() { lastTier = null; lastChatKey = ''; worldKey = ''; replayAsof = null; prevSnap = null; lastRoster = null; liveDays = []; data = null; poll(); }
 
 // ---------------- events: trades closing, rehires, new leads/orders, level ups
 function events(d) {
@@ -60,10 +54,10 @@ function events(d) {
   }
   prevSnap = snap;
   // hire ceremony: a roster version went up
-  const base = lastRoster || (mode === 'real' ? JSON.parse(localStorage.getItem('hq_roster_real') || 'null') : null) || {};
+  const base = lastRoster || JSON.parse(localStorage.getItem('hq_roster_real') || 'null') || {};
   (d.roster || []).forEach(r => { const was = base[r.name] || 1; if (r.version > was) { PX.ceremony(r.name); toast(`NEW HIRE: ${r.name.toUpperCase()} v${r.version} moves in!`); sfx('level'); } });
   lastRoster = Object.fromEntries((d.roster || []).map(r => [r.name, r.version]));
-  if (mode === 'real' && !d.asof) localStorage.setItem('hq_roster_real', JSON.stringify(lastRoster));
+  if (!d.asof) localStorage.setItem('hq_roster_real', JSON.stringify(lastRoster));
 }
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => { t.hidden = true; }, 4000); }
 
@@ -115,7 +109,7 @@ function render() {
       + (p.starting_balance_mismatch ? ` Start balance in tradovate.json (${money(p.starting_balance_file)}) ≠ my-rules.md.` : '');
   }
   syncBadge(d); marketWidget(d);
-  $('updated').textContent = (d.demo ? 'DEMO data built ' : 'Real data updated ') + fmtTime(d.generated_at) + (d.asof ? ` · REPLAY as of ${fmtDay(d.asof)}` : '');
+  $('updated').textContent = 'Real data updated ' + fmtTime(d.generated_at) + (d.asof ? ` · REPLAY as of ${fmtDay(d.asof)}` : '');
   $('limitBanner').hidden = !p.daily_limit_hit;
   $('limitBanner').textContent = `DAILY LIMIT HIT: today's paper loss reached ${money(p.daily_limit_usd)} (2%). Per my-rules.md no more cards until tomorrow.`;
   replayUI(d);
@@ -180,11 +174,11 @@ function world(d, lvl) {
       h += `<div class="tag amen" style="--c:#c8d0f0;left:${left}px;top:${top}px;width:${width}px;height:${height}px"><b>${esc(fl.room.name)}</b><span>Unlocked at ${esc(t ? t.label : '')}</span><em>Bitizens relaxing</em></div>`;
     } else h += `<div class="tag compact amen" style="--c:#c8d0f0;left:${left}px;top:${top}px;width:${width}px;height:${height}px"><b>${esc(fl.room.name)}</b></div>`;
   });
-  if (lvl >= 2) h += `<div class="bill ${lvl >= 5 ? 'neon' : ''}" style="left:${(lay.x0 + 35) * S}px;top:${(lay.roofY - PX.LED - 29) * S}px;width:${64 * S}px;height:${11 * S}px">${lvl >= 5 ? 'CHEN TOWER' : "CAM'S DESK"}${d.demo ? ' ·DEMO' : ''}</div>`;
+  if (lvl >= 2) h += `<div class="bill ${lvl >= 5 ? 'neon' : ''}" style="left:${(lay.x0 + 35) * S}px;top:${(lay.roofY - PX.LED - 29) * S}px;width:${64 * S}px;height:${11 * S}px">${lvl >= 5 ? 'CHEN TOWER' : "CAM'S DESK"}</div>`;
   if (ghostY != null) { const nt = d.tiers.find(t => t.level === lvl + 1);
     h += `<div class="ghost" style="left:${lay.x0 * S}px;top:${ghostY * S}px;width:${PX.TW * S}px;height:${FH * S}px">NEXT: ${esc(nt.unlocks.split(' + ')[0].toUpperCase())} AT ${esc(nt.label.split(' ')[0])}</div>`; }
   h += timeline(d, lay, S);
-  const tk = (d.ticker && d.ticker.length ? d.ticker : ['NO LEADS YET', 'DESK HQ', 'PAPER ONLY']).join('  ◆  ') + (d.demo ? '  ◆  DEMO DATA' : '');
+  const tk = (d.ticker && d.ticker.length ? d.ticker : ['NO LEADS YET', 'DESK HQ', 'PAPER ONLY']).join('  ◆  ');
   h += `<div class="ledtick${lay.compact ? ' compact' : ''}" title="Latest leads and Skeptic verdicts" style="left:${lay.x0 * S}px;top:${(lay.roofY - PX.LED + 1) * S}px;width:${PX.TW * S}px;height:${(PX.LED - 2) * S}px"><span style="animation-duration:${Math.max(12, Math.round(tk.length * .22))}s;animation-delay:-${Math.max(12, Math.round(tk.length * .22)) * .3}s">${esc(tk)}</span></div>`;
   const rk = worldState.risk;
   h += `<div class="riskhot" title="RISK METER: today's loss is ${rk}% of the 2% daily limit (top of the lift shaft = limit hit)" style="left:${(lay.x0 + 3) * S}px;top:${lay.roofY * S}px;width:${3 * S}px;height:${(lay.groundY - lay.roofY) * S}px"></div>`;
@@ -252,7 +246,7 @@ function nyOpen() { const p = Object.fromEntries(new Intl.DateTimeFormat('en-US'
 function ago(ms) { const m = Math.max(0, Math.round(ms / 6e4)); return m < 60 ? m + 'M' : m < 2880 ? Math.round(m / 60) + 'H' : Math.round(m / 1440) + 'D'; }
 function syncBadge(d) {
   const el = $('syncBadge'), p = d.pnl, sy = d.sync;
-  if (d.demo || d.asof) { el.hidden = true; return; }
+  if (d.asof) { el.hidden = true; return; }
   el.hidden = false; let c = 'off', t, tip;
   if (sy && sy.ok === false) { c = 'bad'; t = 'SYNC FAILED' + (sy.at ? ' · ' + fmtTime(sy.at).toUpperCase() : ''); tip = sy.message || 'data/sync_status.json says the last sync failed'; }
   else if (p.source === 'tradovate') { const age = Date.now() - Date.parse(p.as_of), open = nyOpen();
@@ -354,12 +348,12 @@ async function shareCard() {
   T('TODAY', cx, 78, 8, '#9aa5d6'); T(money(p.today, true), cx, 98, 12, col(p.today));
   T('TOTAL', cx + 130 < c.width - 90 ? cx + 130 : cx, cx + 130 < c.width - 90 ? 78 : 118, 8, '#9aa5d6');
   if (cx + 130 < c.width - 90) T(money(p.total, true), cx + 130, 98, 12, col(p.total)); else T(money(p.total, true), cx + 60, 118, 10, col(p.total));
-  T((d.demo ? 'DEMO DATA (FAKE) · ' : 'PAPER ONLY · ') + new Date().toLocaleDateString('en-AU', {timeZone: 'Australia/Sydney', day: 'numeric', month: 'short', year: 'numeric'}), pad, c.height - 16, 8, d.demo ? '#ffd23f' : '#4cff8f');
+  T('PAPER ONLY · ' + new Date().toLocaleDateString('en-AU', {timeZone: 'Australia/Sydney', day: 'numeric', month: 'short', year: 'numeric'}), pad, c.height - 16, 8, '#4cff8f');
   T('read-only desk visualisation · not advice', pad, c.height - 4, 13, '#6b7398', 'VT323');
   return c;
 }
 $('share').onclick = async () => { const c = await shareCard(); if (!c) return; openBot = null;
-  const url = c.toDataURL('image/png'), name = `desk-tower-${new Date().toISOString().slice(0, 10)}${data.demo ? '-demo' : ''}.png`;
+  const url = c.toDataURL('image/png'), name = `desk-tower-${new Date().toISOString().slice(0, 10)}.png`;
   $('modalBody').innerHTML = `<div class="eyebrow">SHARE CARD</div><p class="srcNote">Made in your browser. Nothing is uploaded; download it and share it yourself.</p>
     <img class="sharePrev px" src="${url}" alt="Share card preview"><div class="shareBtns"><a class="btnpx" href="${url}" download="${name}">⬇ DOWNLOAD PNG</a></div>`;
   $('modal').hidden = false; };
@@ -368,7 +362,7 @@ $('share').onclick = async () => { const c = await shareCard(); if (!c) return; 
 function openRules() {
   const r = data && data.rules; if (!r) return; openBot = null;
   const v = (x, suf) => x == null ? '<i class="neg">not found</i>' : x + suf;
-  $('modalBody').innerHTML = `<div class="eyebrow">RULE BOARD</div>${data.demo ? '<div class="flag">DEMO DATA · fake example rules</div>' : ''}
+  $('modalBody').innerHTML = `<div class="eyebrow">RULE BOARD</div>
     <div class="rulegrid"><div><label>MAX LOSS</label><b>${v(r.max_loss_pct, '%')}</b><small>per trade</small></div><div><label>DAILY LIMIT</label><b>${v(r.daily_limit_pct, '%')}</b><small>then no cards</small></div>
     <div><label>CARDS</label><b>${v(r.cards_per_day, '')}</b><small>per day max</small></div><div><label>MAX SIZE</label><b>${v(r.max_size_pct, '%')}</b><small>per trade</small></div></div>
     <div class="eyebrow msec">AUTOPILOT <span class="${r.autopilot === 'ON' ? 'pos' : 'neg'}">${esc(r.autopilot)}</span></div>
@@ -507,7 +501,7 @@ function openModal(name, refresh) {
   const leadMap = Object.fromEntries((data.leads || []).map(l => [l.lead_id, l]));
   const latest = b.reports && b.reports[0];
   $('modalBody').innerHTML = `
-    <div class="idcard" style="--c:${PX.COL[name]}"><div class="idtop"><span>DESK HQ · STAFF ID</span><span>${data.demo ? 'DEMO' : 'No. ' + String(PX.BOT_ORDER.indexOf(name) + 1).padStart(3, '0')}</span></div>
+    <div class="idcard" style="--c:${PX.COL[name]}"><div class="idtop"><span>DESK HQ · STAFF ID</span><span>No. ${String(PX.BOT_ORDER.indexOf(name) + 1).padStart(3, '0')}</span></div>
       <div class="idbody"><img class="mAv px" src="${avatar(name)}" alt=""><dl>
         <dt>NAME</dt><dd><b>${esc(name.toUpperCase())}</b> <span class="ver">v${b.version || 1}</span></dd>
         <dt>JOB</dt><dd>${esc(b.role)}</dd><dt>FLOOR</dt><dd>${esc(room.name)}</dd>
@@ -517,7 +511,6 @@ function openModal(name, refresh) {
       <div class="idbar"></div></div>
     <div class="srcNote">${esc(b.job)}</div>
     ${prop ? `<div class="flag">⚠ Fire/rehire proposal open: ${esc(prop.why)} Cam decides in chat with Chief.</div>` : ''}
-    ${data.demo ? '<div class="flag">DEMO DATA · fake example</div>' : ''}
     <div class="stats m"><div><label>LEADS</label><b>${b.leads.length}</b></div><div><label>TRADES</label><b>${st.trades}</b></div>
       <div><label>WIN%</label><b>${st.winrate == null ? '–' : st.winrate + '%'}</b></div><div><label>NET</label><b class="${cls(st.net)}">${money(st.net, true)}</b></div></div>
     <div class="eyebrow msec">LATEST REPORT</div>
@@ -574,5 +567,5 @@ function celebrate(name) {
 }
 (function logo() { const c = $('logo'); PX.icon(c, 5); c.style.width = '32px'; c.style.height = '48px'; })();
 let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { worldKey = ''; data && render(); }, 150); });
-setMode(mode); setInterval(poll, POLL_MS);
+start(); setInterval(poll, POLL_MS);
 if (Q.get('open')) { const want = Q.get('open'); const t = setInterval(() => { if (data) { clearInterval(t); want === 'rules' ? openRules() : want === 'share' ? $('share').click() : openModal(want); } }, 200); }
